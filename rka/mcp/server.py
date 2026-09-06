@@ -901,6 +901,9 @@ async def rka_add_literature(
     added_by: str = "brain",
     *,
     project_id: str,
+    status: str | None = None,
+    tags: list[str] | None = None,
+    related_decisions: list[str] | None = None,
 ) -> str:
     """Add a literature entry (paper, article, etc.).
 
@@ -917,6 +920,9 @@ async def rka_add_literature(
         relevance: How it relates to this project
         pdf_path: Local path to PDF
         added_by: Who added this — brain | executor | pi
+        status: Initial reading status (defaults to to_read)
+        tags: Free-form tags
+        related_decisions: Decision IDs informed by this reference
     """
     async with _client(project_id) as c:
         body = {
@@ -924,6 +930,7 @@ async def rka_add_literature(
             "doi": doi, "url": url, "bibtex": bibtex, "abstract": abstract,
             "key_findings": key_findings, "relevance": relevance,
             "pdf_path": pdf_path, "added_by": added_by,
+            "status": status, "tags": tags, "related_decisions": related_decisions,
         }
         r = await c.post("/api/literature", json={k: v for k, v in body.items() if v is not None})
         _raise_with_detail(r)
@@ -9337,9 +9344,9 @@ async def _rka_execute_legacy_impl(
     ],
     *,
     project_id: str | None = None,
-    source: SourceLiteral = "executor",
-    confidence: ConfidenceLiteral = "hypothesis",
-    importance: ImportanceLiteral = "normal",
+    source: SourceLiteral | None = None,
+    confidence: ConfidenceLiteral | float | None = None,
+    importance: ImportanceLiteral | None = None,
     verbatim_input: str | None = None,
     provenance: dict | None = None,
     tags: list[str] | None = None,
@@ -9350,6 +9357,9 @@ async def _rka_execute_legacy_impl(
     callers and a small number of unit tests that probe the **kw
     signature shape directly. The canonical v2.7.0 surface is the typed
     ``rka_execute(args: ExecuteArgsUnion)`` above.
+
+    Omitted common fields stay omitted until dispatch chooses the operation's
+    defaults; injecting creation defaults here would overwrite existing notes.
     """
     return await _dispatch_execute(
         operation,

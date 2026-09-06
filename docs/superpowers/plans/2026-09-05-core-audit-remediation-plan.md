@@ -1,7 +1,7 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA 与 S2 文件权限边界的实现及本机验收；跨平台/发布门待验收，尚未推送、合并或部署。
+- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界及 I1/I2 本批已确认写入缺陷的实现和本机验收。第三批完整 Core 3405 passed；跨平台、剩余覆盖及发布门待验收，尚未推送、合并或部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
@@ -147,6 +147,7 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 **I1 — BibTeX 与导入 actor**
 
+- 第三批施工及验收记录：[导入与字段写入修复](2026-09-06-core-write-repairs-validation.md)；兼容边界见 [Import behavior](../../IMPORT_BEHAVIOR.md)。
 - 独立 PR 修正确 parser API；使用锁定依赖和无 academic extra 两种环境验收。
 - 保留 literature 的 `added_by='import'` 来源语义，事件执行 actor 显式规范为 system；
   不把两个词表机械合并，也不吞掉所有 AttributeError 后静默降级。
@@ -155,6 +156,7 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 **I2 — MCP/REST 字段持久化对等**
 
+- 同批记录覆盖已确认的字段丢失、hint 的数值 confidence 与更新默认值区分；不将这些代表性回读测试冒称为每个 stable 操作的全部字段穷举验证。
 - 修 register_source、record_decision、record_literature 的每一跳字段转发，
   同时审查 lifted common fields 与后续 legacy adapters 的字段消费。
 - 测试覆盖 tags、provenance、status、related_decisions、归属及 omission/null

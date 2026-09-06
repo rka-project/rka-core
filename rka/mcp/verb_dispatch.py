@@ -260,6 +260,9 @@ async def dispatch_record_literature(
         url=url,
         abstract=abstract,
         added_by="brain",
+        status=status,
+        tags=tags,
+        related_decisions=related_decisions,
         project_id=project_id,
     )
 
@@ -2133,8 +2136,9 @@ EXECUTE_OPERATIONS = (
 # directive became an executor note and a `verified` finding reverted to
 # `hypothesis`, while `verbatim_input` survived the demotion so the row went
 # on to assert the Executor had written the PI's exact words.
-# The signature defaults for the three fields above, kept beside the set that
-# governs them so the two cannot drift apart.
+# Creation defaults are applied only after recording which fields were supplied.
+# Comparing values to these defaults cannot distinguish an omitted field from
+# an explicit request to reset a stored value to its default.
 _IDENTITY_FIELD_DEFAULTS = {
     "source": "executor",
     "confidence": "hypothesis",
@@ -2154,9 +2158,9 @@ async def dispatch_execute(
     operation: str,
     *,
     project_id: str | None,
-    source: str = "executor",
-    confidence: str = "hypothesis",
-    importance: str = "normal",
+    source: str | None = None,
+    confidence: str | float | None = None,
+    importance: str | None = None,
     verbatim_input: str | None = None,
     provenance: dict[str, Any] | None = None,
     tags: list[str] | None = None,
@@ -2192,6 +2196,18 @@ async def dispatch_execute(
       - create_project, reset_session → dispatch_session
     """
     op = operation
+    supplied_identity_fields = {
+        key for key, value in (
+            ("source", source), ("confidence", confidence), ("importance", importance)
+        ) if value is not None
+    }
+    # None means omission on these update fields, just as on the typed surface.
+    # Hint confidence is numeric and has a different operation-specific default.
+    source = source if source is not None else _IDENTITY_FIELD_DEFAULTS["source"]
+    confidence = confidence if confidence is not None else (
+        0.5 if op == "add_interpretation_hint" else _IDENTITY_FIELD_DEFAULTS["confidence"]
+    )
+    importance = importance if importance is not None else _IDENTITY_FIELD_DEFAULTS["importance"]
     if op not in EXECUTE_OPERATIONS:
         valid = sorted(EXECUTE_OPERATIONS)
         return _err(
@@ -2243,7 +2259,7 @@ async def dispatch_execute(
             expected_content_hash=kw.get("expected_content_hash"),
             ownership_kind=kw.get("ownership_kind", "unknown"),
             ownership_note=kw.get("ownership_note"),
-            provenance=kw.get("provenance"),
+            provenance=provenance,
             project_id=project_id,
         )
 
@@ -2268,7 +2284,7 @@ async def dispatch_execute(
             rationale=kw.get("rationale"),
             created_by=kw.get("created_by"),
             expected_revision=kw.get("expected_revision"),
-            confidence=kw.get("confidence", 0.5),
+            confidence=confidence,
             project_id=project_id,
         )
 
@@ -2640,7 +2656,7 @@ async def dispatch_execute(
             importance=importance,
             justified_by=kw.get("justified_by"),
             provenance=provenance,
-            tags=kw.get("tags"),
+            tags=tags,
             status=kw.get("status"),
         )
 
@@ -2654,7 +2670,7 @@ async def dispatch_execute(
             "decided_by": kw.get("decided_by", "brain"),
             # v2.7.0.6 — None preserved so the service-layer inheritance fires;
             # `phase or kw.get('phase', '')` used to coerce missing phase to "".
-            "phase": phase if phase is not None else kw.get("phase"),
+            "phase": phase,
             "kind": kw.get("kind", "decision"),
             # v2.7.0.5 — SupersedeDecisionArgs enforces related_journal
             # non-empty at the typed-args layer, but prior versions dropped
@@ -2733,7 +2749,7 @@ async def dispatch_execute(
             "mission_id": kw.get("mission_id") or kw.get("id"),
             "rq_id": kw.get("rq_id"),
             "objective": kw.get("objective"),
-            "phase": phase or kw.get("phase"),
+            "phase": phase,
             "tasks": kw.get("tasks"),
             "context": kw.get("context"),
             "acceptance_criteria": kw.get("acceptance_criteria"),
@@ -2851,16 +2867,8 @@ async def dispatch_execute(
         # Thread the operation-common kwargs into the payload when they are
         # not already present.
         #
-        # On an update, three of them must not be threaded in unless the
-        # caller actually asked for them. They are lifted into named
-        # arguments by dispatch_execute_typed, so by the time they arrive
-        # here an omitted field and one the caller passed look identical —
-        # the only thing left to compare against is the default itself.
-        #
-        # A value that differs from the default was passed. A value equal to
-        # it either was omitted, or was passed and is a no-op write on an
-        # update; skipping both is correct, because writing "hypothesis" over
-        # a stored `verified` is exactly the damage.
+        # On updates, omit synthetic creation defaults but retain explicit
+        # values, including a deliberate reset to hypothesis/normal/executor.
         for k, v in (
             ("source", source),
             ("confidence", confidence),
@@ -2872,7 +2880,7 @@ async def dispatch_execute(
             if (
                 op in _IDENTITY_SENSITIVE_UPDATES
                 and k in _IDENTITY_FIELD_DEFAULTS
-                and v == _IDENTITY_FIELD_DEFAULTS[k]
+                and k not in supplied_identity_fields
             ):
                 continue
             payload.setdefault(k, v)

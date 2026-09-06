@@ -15,9 +15,18 @@ All notable changes to RKA are documented here. Format loosely follows
   `system`. Mixed batch imports no longer write an executor into a journal's
   source field; journal creation keeps `data.source`/`verbatim_input`, with the
   separate actor recorded in events, links and audit. Explicit invalid actors
-  remain invalid. Existing records and journal update semantics are unchanged.
+  remain invalid. Existing records are not rewritten; service-level journal
+  update/attribution policy is unchanged.
 - Typed BibTeX imports now forward `default_status`; MCP import output includes
   error details. See [import behavior](docs/IMPORT_BEHAVIOR.md).
+- MCP writes retain registered-source provenance, decision tags (including
+  replacement), literature status/tags/decision links, and numeric interpretation
+  hint confidence. Typed, raw dispatch and legacy entry points are checked by
+  actual SQLite-backed REST read-back, not just outgoing payload assertions.
+- MCP updates distinguish omitted common fields from explicit default values:
+  content-only edits preserve author/confidence/importance, while an explicit
+  reset to `hypothesis` or `normal` is no longer silently ignored. Creation
+  defaults remain unchanged; nullable-field policies are not globally changed.
 
 ### Security
 

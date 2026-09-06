@@ -85,19 +85,44 @@ class TestAnUpdateDoesNotFabricateIdentity:
         )
         assert captured.get("source") == "executor"
 
-    def test_the_recorded_defaults_match_the_real_signature(self):
-        """The rule compares against a copy of the signature defaults.
+    def test_signatures_preserve_omission_and_creation_defaults_match_the_model(self):
+        """Guard both layers against injecting creation defaults into updates.
 
-        If the signature changes and the copy does not, the comparison
-        silently stops matching and every update starts fabricating again.
+        I2 replaces value comparison with presence tracking: the wrappers must
+        retain None until dispatch chooses whether a creation default applies.
+        The defaults themselves must still agree with the journal create model.
         """
-        sig = inspect.signature(verb_dispatch.dispatch_execute)
+        from rka.mcp.server import _rka_execute_legacy_impl
+
         for field, recorded in verb_dispatch._IDENTITY_FIELD_DEFAULTS.items():
-            assert sig.parameters[field].default == recorded, (
-                f"dispatch_execute({field}=...) defaults to "
-                f"{sig.parameters[field].default!r}, but the rule compares "
-                f"against {recorded!r}"
-            )
+            assert JournalEntryCreate.model_fields[field].default == recorded
+            for dispatcher in (verb_dispatch.dispatch_execute, _rka_execute_legacy_impl):
+                assert inspect.signature(dispatcher).parameters[field].default is None, (
+                    f"{dispatcher.__name__} must not fabricate {field} on an update"
+                )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", sorted(verb_dispatch._IDENTITY_SENSITIVE_UPDATES))
+    async def test_each_update_distinguishes_omission_from_explicit_defaults(
+        self, monkeypatch, operation,
+    ):
+        captured = {}
+
+        async def _fake_review(op, *, project_id, payload, **kw):
+            captured.clear()
+            captured.update(payload)
+            return "{}"
+
+        monkeypatch.setattr(verb_dispatch, "dispatch_review", _fake_review)
+        await verb_dispatch.dispatch_execute(operation, project_id="prj_x", id="jrn_x")
+        assert not (captured.keys() & verb_dispatch._IDENTITY_FIELD_DEFAULTS.keys())
+
+        await verb_dispatch.dispatch_execute(
+            operation, project_id="prj_x", id="jrn_x",
+            **verb_dispatch._IDENTITY_FIELD_DEFAULTS,
+        )
+        for field, default in verb_dispatch._IDENTITY_FIELD_DEFAULTS.items():
+            assert captured[field] == default
 
     def test_every_mutating_op_in_the_map_is_covered(self):
         """A new update op added to _REVIEW_OP_MAP must join the skip set.
