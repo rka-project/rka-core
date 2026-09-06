@@ -7,6 +7,13 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- Built-in embedding backends reject oversized prepared inputs (default 8 KiB)
+  without truncating source text, bound logical calls and provider batches, and
+  enforce a whole-call deadline with one active call per process. Native work
+  retains admission after caller timeout/cancellation until it actually ends.
+  Backfill isolates invalid rows and bounds error samples; legacy hash inspection
+  is paged. This is an initial resource guard, not durable backfill recovery or a
+  hard memory sandbox; see [limits and compatibility](docs/embedding_backends.md#resource-limits-unreleased-hardening).
 - BibTeX imports use the supported v2 `parse_string` entry point. Base installs
   use a balanced-value subset parser instead of silently truncating nested
   braces; unsupported constructs and malformed/duplicate blocks report errors

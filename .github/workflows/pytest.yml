@@ -129,6 +129,18 @@ jobs:
           python -c "import importlib.util; assert importlib.util.find_spec('bibtexparser') is None"
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_bibtex_parser.py tests/test_services/test_bibtex_import.py tests/test_services/test_journal_write_path.py tests/test_mcp/test_import_roundtrip.py tests/test_mcp/test_write_field_roundtrip.py
 
+      - name: Verify embedding admission without model downloads
+        env:
+          RKA_DATA_DIR: ${{ runner.temp }}/rka-embedding-resource-data
+          RKA_EMBEDDINGS_ENABLED: "false"
+          RKA_LLM_ENABLED: "false"
+          RKA_API_URL: http://127.0.0.1:1
+          HF_HUB_OFFLINE: "1"
+        run: |
+          python -m pytest -q --tb=short --strict-markers tests/test_infra/test_embedding_resource_boundary.py tests/test_services/test_embedding_backends.py
+          python -m pip install "sqlite-vec==0.1.6"
+          python -m pytest -q --tb=short --strict-markers tests/test_services/test_embedding_resource_backfill.py tests/test_services/test_embedding_backfill.py
+
   docker-core:
     runs-on: ubuntu-latest
     timeout-minutes: 15

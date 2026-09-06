@@ -36,6 +36,7 @@ from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
     reconcile_dim,
 )
+from rka.infra.embedding_resources import EmbeddingResourceLimits, request_timeout, run_http
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +58,20 @@ class OpenAICompatBackend:
         document_template: str = "{text}",
         embedding_space_id: str | None = None,
         http_client: httpx.AsyncClient | None = None,
+        resource_limits: dict | None = None,
     ) -> None:
         if not base_url:
             raise ValueError("openai_compat backend requires base_url")
         if not model:
             raise ValueError("openai_compat backend requires model")
         self._base_url = base_url.rstrip("/")
+        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
         self._model = model
         self._api_key = api_key or None  # treat empty string as missing
         # dim is "expected" — the backend trusts the config until the
         # first real call detects a different length.
         self._dim: int = dim or 0
-        self._timeout = timeout_seconds
+        self._timeout = request_timeout(timeout_seconds)
         self._query_template = self._validate_template("query_template", query_template)
         self._document_template = self._validate_template("document_template", document_template)
         if embedding_space_id is not None and not isinstance(embedding_space_id, str):
@@ -92,8 +95,12 @@ class OpenAICompatBackend:
     def _validate_template(name: str, value: str) -> str:
         if not isinstance(value, str):
             raise ValueError(f"{name} must be a string")
+        if len(value) > 8192 + len("{text}"):
+            raise ValueError(f"{name} exceeds the prepared-input byte budget")
         if value.count("{text}") != 1:
             raise ValueError(f"{name} must contain exactly one {{text}} placeholder")
+        if len(value.replace("{text}", "").encode("utf-8")) > 8192:
+            raise ValueError(f"{name} exceeds the prepared-input byte budget")
         return value
 
     def _prepare(self, text: str, *, is_query: bool) -> str:
@@ -101,6 +108,9 @@ class OpenAICompatBackend:
         # Literal replacement is intentional. This is not a general-purpose
         # Python format string, so record text cannot be interpreted as syntax.
         return template.replace("{text}", text)
+
+    def validate_input(self, text: str, *, is_query: bool = False) -> None:
+        self.resource_limits.plan([text], lambda t: self._prepare(t, is_query=is_query))
 
     def _client(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -181,14 +191,22 @@ class OpenAICompatBackend:
         raise RuntimeError("openai_compat embed: exhausted retries")
 
     async def embed(self, text: str, *, is_query: bool = False) -> list[float]:
-        out = await self._post_embeddings([self._prepare(text, is_query=is_query)])
+        out = await self.embed_batch([text], is_query=is_query)
         return out[0]
 
     async def embed_batch(self, texts: list[str], *, is_query: bool = False) -> list[list[float]]:
         if not texts:
             return []
-        return await self._post_embeddings(
-            [self._prepare(text, is_query=is_query) for text in texts]
+        batches = self.resource_limits.plan(texts, lambda t: self._prepare(t, is_query=is_query))
+
+        async def infer():
+            vectors = []
+            for batch in batches:
+                vectors.extend(await self._post_embeddings(batch))
+            return vectors
+
+        return await run_http(
+            infer, timeout=min(self._timeout, self.resource_limits.call_timeout_seconds)
         )
 
     async def test_connection(self) -> ConnectionTestResult:

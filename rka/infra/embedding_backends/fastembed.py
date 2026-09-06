@@ -12,7 +12,6 @@ Preserves the prior production semantics exactly:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import time
@@ -22,6 +21,7 @@ from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
     reconcile_dim,
 )
+from rka.infra.embedding_resources import EmbeddingResourceLimits, run_native
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,10 @@ class FastEmbedBackend:
         dim: int | None = None,
         threads: int | None = None,
         cache_dir: str | None = None,
+        resource_limits: dict | None = None,
     ) -> None:
         self._model_name = model_name
+        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
         self._model: Any = None
         # If `dim` is provided, that becomes the strict expectation enforced
         # by `reconcile_dim`. If omitted (None), default to nomic-v1.5's 768
@@ -111,19 +113,26 @@ class FastEmbedBackend:
         return f"{marker}{text}"
 
     def _sync_embed(self, texts: list[str], *, is_query: bool) -> list[list[float]]:
+        batches = self.resource_limits.plan(texts, lambda t: self._prefix(t, is_query=is_query))
+        return self._sync_embed_batches(batches)
+
+    def _sync_embed_batches(self, batches: list[list[str]]) -> list[list[float]]:
         model = self._get_model()
-        prefixed = [self._prefix(t, is_query=is_query) for t in texts]
-        result = [v.tolist() for v in model.embed(prefixed)]
-        if result:
-            # T2.5 calibration: drift-check rather than silent mutate.
-            # `reconcile_dim` raises EmbeddingConfigError on drift; on
-            # `self._dim == 0` (advanced empty-dim config) it returns the
-            # observed dim so we can populate.
-            self._dim = reconcile_dim(self._dim, len(result[0]))
+        result = []
+        for batch in batches:
+            vectors = [v.tolist() for v in model.embed(batch, batch_size=len(batch))]
+            if len(vectors) != len(batch):
+                raise ValueError("fastembed returned a different number of vectors than inputs")
+            for vector in vectors:
+                self._dim = reconcile_dim(self._dim, len(vector))
+            result.extend(vectors)
         return result
 
+    def validate_input(self, text: str, *, is_query: bool = False) -> None:
+        self.resource_limits.plan([text], lambda t: self._prefix(t, is_query=is_query))
+
     async def embed(self, text: str, *, is_query: bool = False) -> list[float]:
-        out = await asyncio.to_thread(self._sync_embed, [text], is_query=is_query)
+        out = await self.embed_batch([text], is_query=is_query)
         return out[0]
 
     async def embed_batch(
@@ -131,7 +140,11 @@ class FastEmbedBackend:
     ) -> list[list[float]]:
         if not texts:
             return []
-        return await asyncio.to_thread(self._sync_embed, list(texts), is_query=is_query)
+        batches = self.resource_limits.plan(texts, lambda t: self._prefix(t, is_query=is_query))
+        return await run_native(
+            lambda: self._sync_embed_batches(batches),
+            timeout=self.resource_limits.call_timeout_seconds,
+        )
 
     async def test_connection(self) -> ConnectionTestResult:
         # FastEmbed runs in-process; "test" means: can we load the model

@@ -39,9 +39,11 @@ import logging
 import struct
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
+
+from rka.infra.embedding_resources import EmbeddingInputLimit, EmbeddingResourceLimits
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +397,7 @@ async def stored_metadata_hashes_match(
 ) -> bool:
     """Verify legacy metadata hashes against the current canonical text.
 
-    This bounded seven-query scan is used only while adopting a pre-generation
+    This keyset-paged scan is used only while adopting a pre-generation
     index. It avoids either trusting stale vectors or needlessly discarding a
     healthy existing installation.
     """
@@ -403,23 +405,30 @@ async def stored_metadata_hashes_match(
     from rka.infra.embeddings import EmbeddingService
 
     for entity_type, cfg in _ENTITY_BACKFILL_CONFIGS.items():
-        rows = await db.fetchall(
-            f"""SELECT s.*, m.content_hash AS _embedding_content_hash
-                FROM {cfg.source_table} s
-                JOIN embedding_metadata m
-                  ON m.project_id = s.project_id
-                 AND m.entity_type = ?
-                 AND m.entity_id = s.{cfg.id_column}
-                WHERE m.model_name = ? AND m.dimensions = ?""",
-            [entity_type, model_name, dimensions],
-        )
-        for row in rows:
-            try:
-                text = cfg.compose_text(row)
-            except Exception:  # noqa: BLE001
-                return False
-            if row["_embedding_content_hash"] != EmbeddingService.content_hash(text):
-                return False
+        last_id = ""
+        while True:
+            rows = await db.fetchall(
+                f"""SELECT s.*, m.content_hash AS _embedding_content_hash
+                    FROM {cfg.source_table} s
+                    JOIN embedding_metadata m
+                      ON m.project_id = s.project_id
+                     AND m.entity_type = ?
+                     AND m.entity_id = s.{cfg.id_column}
+                    WHERE m.model_name = ? AND m.dimensions = ?
+                      AND s.{cfg.id_column} > ?
+                    ORDER BY s.{cfg.id_column} LIMIT ?""",
+                [entity_type, model_name, dimensions, last_id, 8],
+            )
+            if not rows:
+                break
+            for row in rows:
+                try:
+                    text = cfg.compose_text(row)
+                except Exception:  # noqa: BLE001
+                    return False
+                if row["_embedding_content_hash"] != EmbeddingService.content_hash(text):
+                    return False
+            last_id = rows[-1][cfg.id_column]
     return True
 
 
@@ -437,6 +446,25 @@ class _BackfillBatchError(Exception):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
+
+
+@dataclass
+class _RowErrors:
+    count: int = 0
+    samples: list[str] = field(default_factory=list)
+
+    def record(self, entity_id: str, exc: Exception) -> None:
+        self.count += 1
+        if len(self.samples) < 3:
+            # Resource errors contain only limit names/counts. Arbitrary backend
+            # or compose exceptions may contain input text or credentials.
+            detail = str(exc) if isinstance(exc, EmbeddingInputLimit) else type(exc).__name__
+            sample = f"{entity_id}: {detail[:256]}"
+            self.samples.append(sample)
+            logger.warning("backfill row left pending: %s", sample)
+
+    def summary(self) -> str:
+        return f"{self.count} row(s) failed; " + "; ".join(self.samples)
 
 
 class BackfillService:
@@ -457,9 +485,21 @@ class BackfillService:
     """
 
     def __init__(self, *, db: Any, embeddings: Any, batch_size: int = 8) -> None:
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 128:
+            raise ValueError("batch_size must be an integer between 1 and 128")
         self._db = db
         self._embeddings = embeddings
         self._batch_size = batch_size
+        limits = getattr(getattr(embeddings, "backend", None), "resource_limits", None)
+        if isinstance(limits, EmbeddingResourceLimits):
+            # Conservative fetch cap ensures even maximum-sized accepted inputs
+            # fit the logical call when an operator tightens resource budgets.
+            self._batch_size = min(
+                batch_size, limits.max_batch_inputs, limits.max_call_inputs,
+                limits.max_batch_bytes // limits.max_input_bytes,
+                limits.max_padding_bytes // limits.max_input_bytes,
+                limits.max_call_bytes // limits.max_input_bytes,
+            )
 
     async def run_backfill(
         self,
@@ -564,7 +604,7 @@ class BackfillService:
         embed_dim: int = int(getattr(self._embeddings, "dim", 0) or 0)
 
         last_id = ""
-        write_errors: list[str] = []
+        row_errors = _RowErrors()
         while True:
             rows = await self._db.fetchall(
                 cfg.pending_cursor_sql,
@@ -579,12 +619,16 @@ class BackfillService:
                 try:
                     text = cfg.compose_text(r)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "%s %s compose_text failed (skipping): %s",
-                        cfg.entity_type, r.get(cfg.id_column), exc,
-                    )
+                    row_errors.record(r.get(cfg.id_column), exc)
                     continue
                 if text:
+                    validate = getattr(self._embeddings, "validate_document", None)
+                    if validate is not None:
+                        try:
+                            validate(text)
+                        except EmbeddingInputLimit as exc:
+                            row_errors.record(r.get(cfg.id_column), exc)
+                            continue
                     work.append((r, text))
 
             last_id = rows[-1][cfg.id_column]
@@ -705,19 +749,12 @@ class BackfillService:
                 except Exception as exc:  # noqa: BLE001
                     # Per-row failure: leave any pending signal intact,
                     # log, continue.
-                    logger.warning(
-                        "%s %s vec-write failed (leaving pending for retry): %s",
-                        cfg.entity_type, entity_id, exc,
-                    )
-                    write_errors.append(f"{entity_id}: {type(exc).__name__}: {exc!s}")
+                    row_errors.record(entity_id, exc)
 
             await _emit_progress(progress_callback, status)
 
-        if write_errors:
-            sample = "; ".join(write_errors[:3])
-            if len(write_errors) > 3:
-                sample += f"; and {len(write_errors) - 3} more"
-            raise _BackfillBatchError(f"vector writes failed: {sample}")
+        if row_errors.count:
+            raise _BackfillBatchError(f"vector writes failed: {row_errors.summary()}")
 
 
 async def _emit_progress(

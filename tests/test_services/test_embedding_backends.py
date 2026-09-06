@@ -667,7 +667,8 @@ async def test_fastembed_embed_raises_on_dim_drift_after_construction():
         def __init__(self, dim: int) -> None:
             self._dim = dim
 
-        def embed(self, texts: list[str]) -> list[_FakeVec]:
+        def embed(self, texts: list[str], *, batch_size: int) -> list[_FakeVec]:
+            assert batch_size == len(texts) <= 8
             return [_FakeVec([0.1] * self._dim) for _ in texts]
 
     b = FastEmbedBackend(model_name="custom-model", dim=4)

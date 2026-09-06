@@ -81,6 +81,64 @@ one literal `{text}` placeholder. Query-only instruction changes do not require
 document re-indexing; changes to the document template or embedding space do.
 See [ADR 0017](adr/0017-portable-embedding-runtime-boundary.md).
 
+## Resource limits (unreleased hardening)
+
+All three built-in backends validate input before loading a model or sending a
+request. Single embeddings, queries, batches and connection probes use the same
+limits. **Oversized input is rejected, not silently truncated.** Canonical source
+text is unchanged. This intentionally tightens compatibility for long documents.
+
+| `config.resource_limits` key | Default and maximum |
+|---|---:|
+| `max_input_bytes` | 8192 |
+| `max_batch_inputs` | 8 |
+| `max_batch_bytes` | 16384 |
+| `max_padding_bytes` | 16384 |
+| `max_call_inputs` | 128 |
+| `max_call_bytes` | 262144 |
+| `call_timeout_seconds` | 120 |
+
+These are UTF-8 **byte budgets, not token counts or memory limits**. Prefixes and
+templates count toward the input limit. Padding cost is conservatively represented
+by longest prepared input bytes multiplied by batch size. The complete logical
+call is validated first; accepted inputs are then split into ordered batches.
+Backfill also caps its database fetch size conservatively, allowing at most two
+maximum-sized inputs per fetch with the default budgets. Legacy hash inspection
+uses keyset pages of eight rows; it no longer loads the entire corpus at once.
+
+The optional nested object can only tighten these limits. For example, add
+`"resource_limits": {"max_input_bytes": 4096, "call_timeout_seconds": 60}` inside
+`config`. Limits must be positive, within the maxima above and consistent
+(input ≤ batch bytes ≤ call bytes, input ≤ padding bytes, batch count ≤ call count).
+Unknown resource-limit keys and booleans are rejected. These advanced settings
+are accepted in backend configuration; the web form has no dedicated controls.
+Changing admission limits alone does not change the encoding identity or discard
+compatible vectors. Same-backend web edits preserve existing advanced config;
+switching backend kinds starts a new config, so reapply any tighter limits then.
+
+Only one provider call is admitted **per process**, across backend instances.
+There is no in-memory waiting queue. HTTP logical-call deadlines include all
+requests and retries, and use the smaller of `timeout_seconds` and
+`call_timeout_seconds`. FastEmbed uses a dedicated single-thread executor; a
+cancelled or timed-out caller does not release admission until native work ends.
+
+- `embedding_input_limit`: a row is too large or a call exceeds its budget.
+  Backfill leaves that row pending, reports failure and continues with valid rows.
+  Existing durable entity jobs retain their normal finite retry/failed-state
+  behavior. Long content remains stored and available to lexical retrieval;
+  unchanged oversized input will not become embeddable merely by retrying it.
+- `embedding_resource_busy`: another inference is active; retry later. Busy or
+  input rejection does not itself mark a reachable provider unavailable.
+- `embedding_call_timeout`: the whole-call deadline expired. A timeout is not a
+  guarantee that ONNX or a remote server stopped computing.
+
+This is not a hard RSS sandbox or a cross-process inference lock. A hung native
+call can keep admission busy. API backfill still runs in-process with volatile
+status; durable ownership, supervised recovery and moving Core inference out of
+the API are the next E1b slice. Chunking/truncation and offline re-indexing need
+separate encoding and migration decisions. See the
+[E1a design](superpowers/specs/2026-09-06-embedding-resource-boundary.md).
+
 ## Switching backends
 
 1. Open the web UI → **Settings** in the sidebar → **Embeddings** card.

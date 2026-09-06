@@ -30,9 +30,10 @@ import httpx
 
 from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
-    EmbeddingConfigError,
+    EmbeddingConfigError as EmbeddingConfigError,
     reconcile_dim,
 )
+from rka.infra.embedding_resources import EmbeddingResourceLimits, request_timeout, run_http
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +51,17 @@ class OllamaBackend:
         dim: int | None = None,
         timeout_seconds: float = 600.0,
         http_client: httpx.AsyncClient | None = None,
+        resource_limits: dict | None = None,
     ) -> None:
         if not base_url:
             raise ValueError("ollama backend requires base_url")
         if not model:
             raise ValueError("ollama backend requires model")
         self._base_url = base_url.rstrip("/")
+        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
         self._model = model
         self._dim: int = dim or 0
-        self._timeout = timeout_seconds
+        self._timeout = request_timeout(timeout_seconds)
         self._http = http_client
 
     @property
@@ -110,15 +113,26 @@ class OllamaBackend:
         raise RuntimeError("ollama embed: exhausted retries")
 
     async def embed(self, text: str, *, is_query: bool = False) -> list[float]:  # noqa: ARG002
-        return await self._post_one(text)
+        return (await self.embed_batch([text], is_query=is_query))[0]
+
+    def validate_input(self, text: str, *, is_query: bool = False) -> None:
+        self.resource_limits.plan([text])
 
     async def embed_batch(
         self, texts: list[str], *, is_query: bool = False  # noqa: ARG002
     ) -> list[list[float]]:
         if not texts:
             return []
-        # /api/embeddings is single-prompt; loop sequentially.
-        return [await self._post_one(t) for t in texts]
+        batches = self.resource_limits.plan(texts)
+
+        async def infer():
+            # /api/embeddings is single-prompt; one logical-call deadline spans
+            # every request and retry, not a fresh deadline for each prompt.
+            return [await self._post_one(text) for batch in batches for text in batch]
+
+        return await run_http(
+            infer, timeout=min(self._timeout, self.resource_limits.call_timeout_seconds)
+        )
 
     async def test_connection(self) -> ConnectionTestResult:
         t0 = time.perf_counter()

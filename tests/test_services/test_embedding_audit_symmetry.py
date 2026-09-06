@@ -223,7 +223,8 @@ async def test_audit_symmetry_fastembed_round_trip_through_vec_claims(db):
         def __init__(self, dim: int) -> None:
             self._dim = dim
 
-        def embed(self, texts):
+        def embed(self, texts, *, batch_size):
+            assert batch_size == len(texts) <= 8
             return [_FakeVec(self._dim) for _ in texts]
 
     await reshape_vec_claims(db, dim=4)
