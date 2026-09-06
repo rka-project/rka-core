@@ -2695,7 +2695,7 @@ async def dispatch_execute(
             authors=kw.get("authors"),
             year_min=kw.get("year_min"),
             venue=kw.get("venue"),
-            status=kw.get("status", "to_read"),
+            status=kw.get("default_status", "to_read") if op == "import_bibtex" else kw.get("status", "to_read"),
             abstract=kw.get("abstract"),
             url=kw.get("url"),
             tags=tags,

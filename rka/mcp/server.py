@@ -2898,6 +2898,8 @@ async def rka_import_bibtex(
             lines.append(f"  ⏭️ Skipped: {len(skipped)}")
         if errors:
             lines.append(f"  ❌ Errors: {len(errors)}")
+            for error in errors[:5]:
+                lines.append(f"  - {error.get('title', 'BibTeX input')}: {error.get('error', 'Import failed')}")
         for item in imported[:10]:
             lines.append(f"  + {item['id']}: {item['title']}")
         return "\n".join(lines)

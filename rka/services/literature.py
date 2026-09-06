@@ -39,7 +39,11 @@ class LiteratureService(BaseService):
     async def create(self, data: LiteratureCreate, actor: str | None = None) -> Literature:
         """Create a new literature entry."""
         lit_id = generate_id("literature")
-        source = actor or data.added_by
+        # Source attribution is not the event-actor vocabulary. Only derive
+        # system for an imported record when no execution actor was supplied.
+        source = self._validate_actor(
+            actor if actor is not None else "system" if data.added_by == "import" else data.added_by
+        )
         related_decisions = (
             None
             if data.related_decisions is None

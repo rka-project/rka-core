@@ -142,6 +142,9 @@ async def batch_import(
     from rka.services.notes import NoteService
 
     results = {"imported": [], "errors": []}
+    # Compatibility alias at the import boundary, not in BaseService's actor
+    # validator. Record-level source/added_by values remain untouched.
+    actor = "system" if req.actor == "import" else req.actor
     note_svc = NoteService(
         svc.lit.db,
         llm=svc.lit.llm,
@@ -159,17 +162,17 @@ async def batch_import(
         try:
             if entry.entity_type == "literature":
                 data = LiteratureCreate(**entry.data)
-                lit = await svc.lit.create(data, actor=req.actor)
+                lit = await svc.lit.create(data, actor=actor)
                 results["imported"].append({"index": i, "id": lit.id, "type": "literature"})
 
             elif entry.entity_type == "note":
                 data = JournalEntryCreate(**entry.data)
-                note = await note_svc.create(data, actor=req.actor)
+                note = await note_svc.create(data, actor=actor)
                 results["imported"].append({"index": i, "id": note.id, "type": "note"})
 
             elif entry.entity_type == "decision":
                 data = DecisionCreate(**entry.data)
-                dec = await dec_svc.create(data, actor=req.actor)
+                dec = await dec_svc.create(data, actor=actor)
                 results["imported"].append({"index": i, "id": dec.id, "type": "decision"})
 
             else:

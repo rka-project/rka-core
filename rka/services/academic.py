@@ -10,6 +10,7 @@ from rka.models.literature import LiteratureCreate
 from rka.models.journal import JournalEntryCreate
 from rka.services.literature import LiteratureService
 from rka.infra.file_access import require_bounded_text
+from rka.services.bibtex import BibtexParseError, parse_basic_bibtex
 
 if TYPE_CHECKING:
     from rka.services.notes import NoteService
@@ -41,7 +42,12 @@ class AcademicImportService:
             Dict with imported, skipped, errors counts and details.
         """
         require_bounded_text(bibtex_content)
-        entries = self._parse_bibtex(bibtex_content)
+        try:
+            entries = self._parse_bibtex(bibtex_content)
+        except BibtexParseError as exc:
+            return {"imported": [], "skipped": [], "errors": [
+                {"title": "BibTeX input", "code": "bibtex_parse_error", "error": str(exc)},
+            ], "total_parsed": 0}
         results = {"imported": [], "skipped": [], "errors": [], "total_parsed": len(entries)}
 
         for entry in entries:
@@ -84,7 +90,10 @@ class AcademicImportService:
                     status=default_status,
                     added_by=added_by,
                 )
-                lit = await self.lit.create(data, actor=added_by)
+                # Import origin is retained on the record; event actors use
+                # the existing execution vocabulary, not a new privilege.
+                actor = "system" if added_by == "import" else added_by
+                lit = await self.lit.create(data, actor=actor)
                 results["imported"].append({"id": lit.id, "title": lit.title})
 
             except Exception as exc:
@@ -105,23 +114,28 @@ class AcademicImportService:
     def _parse_bibtex(self, content: str) -> list[dict]:
         """Parse BibTeX content into a list of entry dicts.
 
-        Uses a lightweight regex parser for robustness (no external dep required).
-        Falls back to bibtexparser if available.
+        Prefer the academic extra; use a bounded subset only when it is absent.
         """
         try:
             return self._parse_bibtex_with_library(content)
-        except ImportError:
-            logger.debug("bibtexparser not installed, using regex parser")
+        except ModuleNotFoundError as exc:
+            if exc.name != "bibtexparser":
+                raise
+            logger.debug("bibtexparser not installed, using basic parser")
             return self._parse_bibtex_regex(content)
 
     def _parse_bibtex_with_library(self, content: str) -> list[dict]:
         """Parse using bibtexparser library."""
         import bibtexparser
 
-        library = bibtexparser.parse(content)
+        library = bibtexparser.parse_string(content)
+        if library.failed_blocks:
+            raise BibtexParseError(
+                f"BibTeX contains {len(library.failed_blocks)} malformed or duplicate blocks; no entries imported"
+            )
         entries = []
         for entry in library.entries:
-            fields = dict(entry.fields_dict)
+            fields = {key.lower(): field for key, field in entry.fields_dict.items()}
             parsed = {
                 "title": self._clean_bibtex_value(fields.get("title", {}).value if "title" in fields else ""),
                 "authors": self._parse_bibtex_authors(
@@ -144,27 +158,10 @@ class AcademicImportService:
         return entries
 
     def _parse_bibtex_regex(self, content: str) -> list[dict]:
-        """Lightweight regex-based BibTeX parser (no external deps)."""
+        """Compatibility name for the dependency-free balanced-value parser."""
         entries = []
-        # Match @type{key, ... }
-        entry_pattern = re.compile(
-            r"@(\w+)\s*\{([^,]*),\s*(.*?)\n\s*\}",
-            re.DOTALL,
-        )
-        field_pattern = re.compile(r"(\w+)\s*=\s*[{\"](.+?)[}\"]", re.DOTALL)
-
-        for match in entry_pattern.finditer(content):
-            entry_type = match.group(1).lower()
-            if entry_type in ("comment", "string", "preamble"):
-                continue
-
-            body = match.group(3)
-            fields = {}
-            for fm in field_pattern.finditer(body):
-                key = fm.group(1).lower().strip()
-                val = fm.group(2).strip()
-                fields[key] = val
-
+        for entry in parse_basic_bibtex(content):
+            fields = entry["fields"]
             parsed = {
                 "title": self._clean_bibtex_value(fields.get("title", "")),
                 "authors": self._parse_bibtex_authors(fields.get("author", "")),
@@ -175,7 +172,7 @@ class AcademicImportService:
                 "doi": self._clean_bibtex_value(fields.get("doi", "")),
                 "url": self._clean_bibtex_value(fields.get("url", "")),
                 "abstract": self._clean_bibtex_value(fields.get("abstract", "")),
-                "raw_bibtex": match.group(0),
+                "raw_bibtex": entry["raw"],
             }
             entries.append({k: v for k, v in parsed.items() if v})
 

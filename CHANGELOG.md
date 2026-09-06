@@ -5,6 +5,20 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- BibTeX imports use the supported v2 `parse_string` entry point. Base installs
+  use a balanced-value subset parser instead of silently truncating nested
+  braces; unsupported constructs and malformed/duplicate blocks report errors
+  before any entries are created. Raw source text is retained.
+- Import origin (`added_by="import"`) is preserved while execution events use
+  `system`. Mixed batch imports no longer write an executor into a journal's
+  source field; journal creation keeps `data.source`/`verbatim_input`, with the
+  separate actor recorded in events, links and audit. Explicit invalid actors
+  remain invalid. Existing records and journal update semantics are unchanged.
+- Typed BibTeX imports now forward `default_status`; MCP import output includes
+  error details. See [import behavior](docs/IMPORT_BEHAVIOR.md).
+
 ### Security
 
 - Caller-provided file paths no longer grant filesystem access. Server-side

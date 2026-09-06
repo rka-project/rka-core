@@ -2741,7 +2741,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["record_literature", "batch_import"],
-        "notes": None,
+        "notes": "Preserves added_by='import' with execution actor='system'. Inspect errors even on HTTP success; malformed libraries create no entries. Base installs support a bounded BibTeX subset; macros/concatenation require the academic extra.",
     },
     "enrich_doi": {
         "operation": "enrich_doi",
