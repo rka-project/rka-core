@@ -24,7 +24,7 @@ active product, dependency, or roadmap track.
 | Core separation E0-E2 | Complete | Preserve the deployed public contract while completing the Core 3.0 release gate. |
 | E3 Agentic extraction | Superseded | A new PI decision is required before any reactivation. |
 | E4 Writer extraction | Repository and legacy staging baseline complete; product design re-baselined | Complete Writer W0 before implementing a new authoring runtime. |
-| E5 Core 3.0 | Active release gate | Release from verified cross-platform artifacts and retain non-destructive legacy export. |
+| E5 Core 3.0 | Audit remediation and release gate active | Close confirmed security, index-recovery, and record-integrity gaps, then verify cross-platform artifacts and non-destructive legacy export. |
 | E6 ecosystem integration | Pending | Add reproducible Core-only, Core+App, and Core+Writer compatibility checks after the downstream vertical slices exist. |
 | RKA App Foundation 0 | Implementation candidate under review | Merge and pin the first released Core image by digest. |
 | RKA Writer | W0 design phase | Ratify the Authoring IR and validate one fully traceable paragraph. |
@@ -71,12 +71,21 @@ integrity, migration, backup, and export.
 
 The current Core gate is:
 
-1. publish a verified Core 3.0 release from immutable, cross-platform
+1. complete the confirmed audit-remediation gates before publishing;
+2. publish a verified Core 3.0 release from immutable, cross-platform
    artifacts;
-2. preserve the stable public REST/MCP contract and capability discovery;
-3. retain the one-way legacy Writer export without switching Writer authority;
-4. keep Core usable without App or Writer; and
-5. treat new authoring behavior as Writer-owned work.
+3. preserve the stable public REST/MCP contract and capability discovery;
+4. retain the one-way legacy Writer export without switching Writer authority;
+5. keep Core usable without App or Writer; and
+6. treat new authoring behavior as Writer-owned work.
+
+The [2026-09-05 audit remediation plan](docs/superpowers/plans/2026-09-05-core-audit-remediation-plan.md)
+and [hardening design](docs/superpowers/specs/2026-09-05-core-hardening-design.md)
+define the current construction sequence: execution/file boundaries, local write
+repairs, bounded and recoverable indexing, audited record/currentness semantics,
+and release verification. Work uses isolated environments; no production database
+cleanup or migration is implied by implementation. App/Writer design may continue,
+but deployment must consume a verified Core release rather than an unverified main.
 
 Core issues after release are prioritized by correctness, security, project
 isolation, recovery, retrieval quality, and compatibility. New Writer,
