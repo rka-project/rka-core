@@ -7,6 +7,15 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Security
 
+- Caller-provided file paths no longer grant filesystem access. Server-side
+  source/artifact registration, BibTeX-file import and workspace scan/ingest
+  and local bootstrap CLI require operator-owned `RKA_SERVER_FILE_ROOTS`; MCP host file operations require
+  the separate `RKA_HOST_FILE_ROOTS`. Both default to `[]` (disabled).
+  Explicit byte uploads, pasted text and existing record retrieval still work.
+  Reads reject symlink/reparse components and unsafe path forms; parsers use
+  bounded private copies. Scans stop at resource limits and report partial
+  counts. This intentionally tightens path-call compatibility; see
+  [file access configuration and limits](docs/FILE_ACCESS.md) before upgrading.
 - SPA fallback paths are confined to the resolved web root, including encoded
   traversal and symlink targets; unsafe paths return 404 while normal client-side
   navigation and assets remain available.

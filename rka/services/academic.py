@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rka.models.literature import LiteratureCreate
 from rka.models.journal import JournalEntryCreate
 from rka.services.literature import LiteratureService
+from rka.infra.file_access import require_bounded_text
 
 if TYPE_CHECKING:
     from rka.services.notes import NoteService
@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 class AcademicImportService:
     """Import and enrich literature from academic sources."""
 
-    def __init__(self, lit_service: LiteratureService, note_service: "NoteService | None" = None):
+    def __init__(self, lit_service: LiteratureService, note_service: "NoteService | None" = None, *, file_policy=None):
         self.lit = lit_service
         self._note_svc = note_service
+        from rka.infra.file_access import FileAccessPolicy
+        self.file_policy = file_policy if file_policy is not None else FileAccessPolicy()
 
     # ---- BibTeX Import ----
 
@@ -38,6 +40,7 @@ class AcademicImportService:
         Returns:
             Dict with imported, skipped, errors counts and details.
         """
+        require_bounded_text(bibtex_content)
         entries = self._parse_bibtex(bibtex_content)
         results = {"imported": [], "skipped": [], "errors": [], "total_parsed": len(entries)}
 
@@ -96,10 +99,7 @@ class AcademicImportService:
         self, file_path: str, **kwargs
     ) -> dict:
         """Import from a .bib file path."""
-        path = Path(file_path)
-        if not path.exists():
-            return {"error": f"File not found: {file_path}"}
-        content = path.read_text(encoding="utf-8")
+        content = self.file_policy.read_bytes(file_path, max_bytes=2 * 1024 * 1024).decode("utf-8")
         return await self.import_bibtex(content, **kwargs)
 
     def _parse_bibtex(self, content: str) -> list[dict]:
@@ -351,6 +351,7 @@ class AcademicImportService:
         Returns:
             Dict with created entries, total count, and any errors.
         """
+        require_bounded_text(content)
         if not self._note_svc:
             from rka.services.notes import NoteService
 

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from rka.services.academic import AcademicImportService
 from rka.api.deps import get_scoped_academic_service
+from rka.infra.file_access import FileAccessError, MAX_TEXT_BYTES
 
 router = APIRouter()
 
@@ -48,9 +49,15 @@ async def import_bibtex_file(
     svc: AcademicImportService = Depends(get_scoped_academic_service),
 ):
     """Import literature entries from an uploaded .bib file."""
-    content = await file.read()
+    content = await file.read(MAX_TEXT_BYTES + 1)
+    if len(content) > MAX_TEXT_BYTES:
+        raise FileAccessError("BibTeX upload exceeds the byte limit", code="file_access_limit", status_code=413)
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(400, "BibTeX upload must be UTF-8") from exc
     return await svc.import_bibtex(
-        bibtex_content=content.decode("utf-8"),
+        bibtex_content=text,
         default_status=default_status,
         added_by=added_by,
         skip_duplicates=skip_duplicates,

@@ -96,7 +96,8 @@ class TestArtifactFigureSearch:
         await _ensure_project(db, "proj_alpha", "Alpha")
         await _ensure_project(db, "proj_beta", "Beta")
 
-        alpha_artifacts = ArtifactService(db=db, llm=None, embeddings=dummy_embeddings, project_id="proj_alpha")
+        from rka.infra.file_access import FileAccessPolicy
+        alpha_artifacts = ArtifactService(db=db, llm=None, embeddings=dummy_embeddings, project_id="proj_alpha", file_policy=FileAccessPolicy([tmp_path]))
         beta_search = SearchService(db=db, embeddings=dummy_embeddings, project_id="proj_beta")
         alpha_search = SearchService(db=db, embeddings=dummy_embeddings, project_id="proj_alpha")
 

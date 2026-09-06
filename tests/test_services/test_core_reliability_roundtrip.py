@@ -155,7 +155,8 @@ async def test_story_and_artifact_links_round_trip_after_database_reopen(
     decisions = DecisionService(db, project_id="prj_story")
     literature = LiteratureService(db, project_id="prj_story")
     missions = MissionService(db, project_id="prj_story")
-    artifacts = ArtifactService(db, project_id="prj_story")
+    from rka.infra.file_access import FileAccessPolicy
+    artifacts = ArtifactService(db, project_id="prj_story", file_policy=FileAccessPolicy([tmp_path]))
 
     pi_note = await notes.create(
         JournalEntryCreate(

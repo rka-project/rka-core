@@ -1,7 +1,7 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：PI 已认可复核方向并授权整体设计、开始实施；当前隔离分支推进首批安全修复，尚未合并或部署。
+- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA 与 S2 文件权限边界的实现及本机验收；跨平台/发布门待验收，尚未推送、合并或部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
@@ -103,6 +103,7 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 **S2 — 修 SPA containment，并审查文件入口的授权根目录**
 
+- 施工记录：[文件边界批次](2026-09-05-core-file-boundary-validation.md)；具体配置及兼容动作见 [File access](../../FILE_ACCESS.md)。原生跨平台及发布门未通过前，不将本机验收视作已发布或全平台完成。
 - SPA 单独做小 PR：规范化根路径和候选路径，越界、编码点路径、绝对路径与
   symlink 逃逸不返回目录外内容；正常资源和 SPA navigation 保持可用。
 - 随后的文件边界 PR 覆盖 workspace scan/ingest、source filepath、BibTeX-file、

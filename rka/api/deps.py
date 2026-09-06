@@ -305,6 +305,7 @@ def get_scoped_audit_service(
 
 
 def get_academic_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(get_project_id),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
@@ -312,10 +313,11 @@ def get_academic_service(
 ) -> AcademicImportService:
     lit_svc = LiteratureService(db, llm=llm, embeddings=embeddings, project_id=project_id)
     note_svc = NoteService(db, llm=llm, embeddings=embeddings, project_id=project_id)
-    return AcademicImportService(lit_svc, note_service=note_svc)
+    return AcademicImportService(lit_svc, note_service=note_svc, file_policy=config.file_access_policy)
 
 
 def get_scoped_academic_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(require_project),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
@@ -323,10 +325,11 @@ def get_scoped_academic_service(
 ) -> AcademicImportService:
     lit_svc = LiteratureService(db, llm=llm, embeddings=embeddings, project_id=project_id)
     note_svc = NoteService(db, llm=llm, embeddings=embeddings, project_id=project_id)
-    return AcademicImportService(lit_svc, note_service=note_svc)
+    return AcademicImportService(lit_svc, note_service=note_svc, file_policy=config.file_access_policy)
 
 
 def get_workspace_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(get_project_id),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
@@ -334,17 +337,19 @@ def get_workspace_service(
 ) -> WorkspaceService:
     lit_svc = LiteratureService(db, llm=llm, embeddings=embeddings, project_id=project_id)
     note_svc = NoteService(db, llm=llm, embeddings=embeddings, project_id=project_id)
-    academic_svc = AcademicImportService(lit_svc, note_service=note_svc)
+    academic_svc = AcademicImportService(lit_svc, note_service=note_svc, file_policy=config.file_access_policy)
     return WorkspaceService(
         db=db,
         academic_service=academic_svc,
         note_service=note_svc,
         literature_service=lit_svc,
+        file_policy=config.file_access_policy,
         llm=llm,
     )
 
 
 def get_scoped_workspace_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(require_project),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
@@ -352,12 +357,13 @@ def get_scoped_workspace_service(
 ) -> WorkspaceService:
     lit_svc = LiteratureService(db, llm=llm, embeddings=embeddings, project_id=project_id)
     note_svc = NoteService(db, llm=llm, embeddings=embeddings, project_id=project_id)
-    academic_svc = AcademicImportService(lit_svc, note_service=note_svc)
+    academic_svc = AcademicImportService(lit_svc, note_service=note_svc, file_policy=config.file_access_policy)
     return WorkspaceService(
         db=db,
         academic_service=academic_svc,
         note_service=note_svc,
         literature_service=lit_svc,
+        file_policy=config.file_access_policy,
         llm=llm,
     )
 
@@ -403,21 +409,23 @@ def get_scoped_qa_service(
 
 
 def get_artifact_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(get_project_id),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
     embeddings: EmbeddingService | None = Depends(get_embeddings),
 ) -> ArtifactService:
-    return ArtifactService(db, llm=llm, embeddings=embeddings, project_id=project_id)
+    return ArtifactService(db, llm=llm, embeddings=embeddings, project_id=project_id, file_policy=config.file_access_policy)
 
 
 def get_scoped_artifact_service(
+    config: RKAConfig = Depends(get_config),
     project_id: str = Depends(require_project),
     db: Database = Depends(get_db),
     llm: LLMClient | None = Depends(get_llm),
     embeddings: EmbeddingService | None = Depends(get_embeddings),
 ) -> ArtifactService:
-    return ArtifactService(db, llm=llm, embeddings=embeddings, project_id=project_id)
+    return ArtifactService(db, llm=llm, embeddings=embeddings, project_id=project_id, file_policy=config.file_access_policy)
 
 
 def get_scoped_source_service(
@@ -429,6 +437,7 @@ def get_scoped_source_service(
         db,
         project_id=project_id,
         max_bytes=config.registered_source_max_bytes,
+        file_policy=config.file_access_policy,
     )
 
 

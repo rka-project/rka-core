@@ -76,6 +76,11 @@ def build_figure_text(
 class ArtifactService(BaseService):
     """Manages file artifacts and figure extraction pipeline."""
 
+    def __init__(self, *args, file_policy=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        from rka.infra.file_access import FileAccessPolicy
+        self.file_policy = file_policy if file_policy is not None else FileAccessPolicy()
+
     async def register(
         self,
         filepath: str,
@@ -91,18 +96,17 @@ class ArtifactService(BaseService):
         Returns the artifact record.
         """
         created_by = self._validate_actor(created_by)
-        path = Path(filepath)
-        if not path.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
+        path = self.file_policy.authorize(filepath)
+        payload = self.file_policy.read_bytes(path)
 
         fname = filename or path.name
         ftype = filetype or path.suffix.lstrip(".")
-        file_size = path.stat().st_size
-        resolved_path = str(path.resolve())
+        file_size = len(payload)
+        resolved_path = str(path)
         metadata_json = json.dumps(metadata) if metadata else None
 
         # Compute content hash for dedup
-        content_hash = self._hash_file(path)
+        content_hash = hashlib.sha256(payload).hexdigest()
 
         artifact_id = generate_id("artifact")
         async with self.db.transaction():
@@ -199,9 +203,11 @@ class ArtifactService(BaseService):
             filepath = artifact["filepath"]
 
             if ftype == "pdf":
-                figures = await self._extract_from_pdf(artifact_id, filepath)
+                with self.file_policy.snapshot(filepath) as snapshot:
+                    figures = await self._extract_from_pdf(artifact_id, str(snapshot))
             elif ftype in ("png", "jpg", "jpeg", "gif", "webp", "svg"):
-                figures = await self._extract_from_image(artifact_id, filepath)
+                with self.file_policy.snapshot(filepath) as snapshot:
+                    figures = await self._extract_from_image(artifact_id, str(snapshot))
             else:
                 logger.info("No figure extraction for filetype: %s", ftype)
 

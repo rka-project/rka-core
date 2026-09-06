@@ -291,6 +291,7 @@ async def lifespan(app: FastAPI):
 def create_app(config: RKAConfig | None = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     effective_config = config or RKAConfig()
+    effective_config.file_access_policy  # Validate operator authority once at startup.
 
     app = FastAPI(
         title="Research Knowledge Agent",
@@ -326,8 +327,13 @@ def create_app(config: RKAConfig | None = None) -> FastAPI:
     # E so consumers can distinguish critical vs warning without knowing
     # the category list.
     from rka.services.base import EntityLinkValidationError
+    from rka.infra.file_access import FileAccessError
     from rka.services.hook_policy import UnsupportedHookHandlerError
     from rka.services.knowledge_pack import KnowledgePackIntegrityError
+
+    @app.exception_handler(FileAccessError)
+    async def file_access_error(request: Request, exc: FileAccessError):
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.code, "detail": str(exc)})
 
     @app.exception_handler(UnsupportedHookHandlerError)
     async def unsupported_hook_handler(request: Request, exc: UnsupportedHookHandlerError):

@@ -578,7 +578,7 @@ def backfill_embeddings_cmd(
 @click.option("--no-llm", is_flag=True, help="Disable LLM-enhanced classification")
 @click.option("--json-output", is_flag=True, help="Output raw JSON manifest")
 def bootstrap_scan(folder: str, ignore: tuple, no_llm: bool, json_output: bool):
-    """Scan a workspace folder and preview file classifications."""
+    """Scan an operator-authorized folder (RKA_SERVER_FILE_ROOTS)."""
     from rka.config import RKAConfig
     from rka.infra.database import Database
     from rka.infra.llm import LLMClient
@@ -588,25 +588,26 @@ def bootstrap_scan(folder: str, ignore: tuple, no_llm: bool, json_output: bool):
     from rka.services.academic import AcademicImportService
 
     config = RKAConfig()
+    file_policy = config.file_access_policy
+    file_policy.directory(folder)
 
     async def _scan():
         db = Database(config.database_url)
         await db.connect()
-        await db.initialize_schema()
-
-        llm = LLMClient(config) if config.llm_enabled and not no_llm else None
-        note_svc = NoteService(db, llm=llm)
-        lit_svc = LiteratureService(db, llm=llm)
-        academic_svc = AcademicImportService(lit_svc, note_service=note_svc)
-        ws_svc = WorkspaceService(db, academic_svc, note_svc, lit_svc, llm=llm)
-
-        manifest = await ws_svc.scan(
-            folder_path=folder,
-            ignore_patterns=list(ignore),
-            use_llm=not no_llm,
-        )
-        await db.close()
-        return manifest
+        try:
+            await db.initialize_schema()
+            llm = LLMClient(config) if config.llm_enabled and not no_llm else None
+            note_svc = NoteService(db, llm=llm)
+            lit_svc = LiteratureService(db, llm=llm)
+            academic_svc = AcademicImportService(lit_svc, note_service=note_svc, file_policy=file_policy)
+            ws_svc = WorkspaceService(db, academic_svc, note_svc, lit_svc, llm=llm, file_policy=file_policy)
+            return await ws_svc.scan(
+                folder_path=folder,
+                ignore_patterns=list(ignore),
+                use_llm=not no_llm,
+            )
+        finally:
+            await db.close()
 
     manifest = asyncio.run(_scan())
 
@@ -651,7 +652,7 @@ def bootstrap_ingest(
     folder: str, phase: str | None, tags: tuple,
     skip: tuple, no_llm: bool, dry_run: bool, yes: bool,
 ):
-    """Scan and ingest a workspace folder into the knowledge base."""
+    """Ingest an operator-authorized folder (RKA_SERVER_FILE_ROOTS)."""
     from rka.config import RKAConfig
     from rka.infra.database import Database
     from rka.infra.llm import LLMClient
@@ -662,37 +663,32 @@ def bootstrap_ingest(
     from rka.models.workspace import WorkspaceIngestRequest
 
     config = RKAConfig()
+    file_policy = config.file_access_policy
+    file_policy.directory(folder)
 
     async def _ingest():
         db = Database(config.database_url)
         await db.connect()
-        await db.initialize_schema()
-
-        llm = LLMClient(config) if config.llm_enabled and not no_llm else None
-        note_svc = NoteService(db, llm=llm)
-        lit_svc = LiteratureService(db, llm=llm)
-        academic_svc = AcademicImportService(lit_svc, note_service=note_svc)
-        ws_svc = WorkspaceService(db, academic_svc, note_svc, lit_svc, llm=llm)
-
-        # Scan
-        manifest = await ws_svc.scan(
-            folder_path=folder,
-            ignore_patterns=[],
-            use_llm=not no_llm,
-        )
-
-        # Ingest
-        request = WorkspaceIngestRequest(
-            manifest=manifest,
-            skip_files=list(skip),
-            override_tags=list(tags),
-            phase=phase,
-            source="pi",
-            dry_run=dry_run,
-        )
-        result = await ws_svc.ingest(request)
-        await db.close()
-        return manifest, result
+        try:
+            await db.initialize_schema()
+            llm = LLMClient(config) if config.llm_enabled and not no_llm else None
+            note_svc = NoteService(db, llm=llm)
+            lit_svc = LiteratureService(db, llm=llm)
+            academic_svc = AcademicImportService(lit_svc, note_service=note_svc, file_policy=file_policy)
+            ws_svc = WorkspaceService(db, academic_svc, note_svc, lit_svc, llm=llm, file_policy=file_policy)
+            manifest = await ws_svc.scan(folder_path=folder, ignore_patterns=[], use_llm=not no_llm)
+            request = WorkspaceIngestRequest(
+                manifest=manifest,
+                skip_files=list(skip),
+                override_tags=list(tags),
+                phase=phase,
+                source="pi",
+                dry_run=dry_run,
+            )
+            result = await ws_svc.ingest(request)
+            return manifest, result
+        finally:
+            await db.close()
 
     # Confirmation
     if not dry_run and not yes:

@@ -35,6 +35,15 @@ that Core dependency profile and does not install legacy LLM-provider SDKs.
 
 ### 1.1 Core tool surface (v3.x)
 
+**Path-reading upgrade note (Unreleased hardening):** record retrieval, pasted
+text and explicit byte uploads do not need filesystem permission. For local
+workspace scan/bootstrap or source `filepath`, the operator must first authorize
+specific input directories in the MCP process's `RKA_HOST_FILE_ROOTS`. Direct
+REST path reads use the separate `RKA_SERVER_FILE_ROOTS`. Both default to `[]`;
+installers must not auto-authorize a home directory or infer permission from
+`project_dir`. See [File access](docs/FILE_ACCESS.md) for macOS/Linux, Windows,
+container examples, limits, restart requirements and a synthetic verification.
+
 In Claude Desktop and Claude Code, you'll see **5 always-on `rka` tools** at session start:
 
 | Tool | Role | Operations behind it |

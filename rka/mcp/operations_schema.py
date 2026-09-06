@@ -2002,7 +2002,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["workspace_scan"],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS in the MCP process. Paths are denied by default; tree counts are bounded and may be partial.",
     },
     "workspace_scan": {
         "operation": "workspace_scan",
@@ -2036,7 +2036,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["workspace_tree", "bootstrap_workspace"],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS. Reads bounded host files and sends previews/metadata to the configured Core server. Request paths never grant authority.",
     },
     "list_projects": {
         "operation": "list_projects",
@@ -3854,7 +3854,9 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "Never fetches a URL, clones a repository, calls an LLM, or writes "
             "journal/claim/decision records. MCP filepath inputs are read on the host "
             "and transferred as bounded bytes; Docker needs no host-path mount. The "
-            "result includes artifact_id for staging."
+            "result includes artifact_id for staging. Path reads require operator-configured "
+            "RKA_HOST_FILE_ROOTS on the MCP host (RKA_SERVER_FILE_ROOTS for direct REST filepath). "
+            "Both default to disabled; pasted text and explicit bytes remain available."
         ),
     },
     "admit_source_interpretation": {
@@ -4789,7 +4791,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "workspace_tree",
             "bootstrap_review",
         ],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS. Sends selected host content to the configured Core server; dry_run still scans and sends previews but does not create records. A server reply cannot nominate unscanned host files.",
     },
     "scan_workspace": {
         "operation": "scan_workspace",

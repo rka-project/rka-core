@@ -25,6 +25,7 @@ from rka.api.deps import (
 from rka.services.academic import AcademicImportService
 from rka.services.literature import LiteratureService
 from rka.services.notes import NoteService
+from rka.infra.file_access import require_bounded_text
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ async def ingest_with_content(
     No filesystem I/O happens here -- the content arrives in the
     request body.
     """
+    require_bounded_text(data.content)
     try:
         if data.content_type in ("text", "code"):
             if data.proposed_type in ("finding", "methodology", "observation",

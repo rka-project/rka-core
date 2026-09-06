@@ -87,6 +87,10 @@ and release verification. Work uses isolated environments; no production databas
 cleanup or migration is implied by implementation. App/Writer design may continue,
 but deployment must consume a verified Core release rather than an unverified main.
 
+The isolated [file-boundary slice](docs/superpowers/plans/2026-09-05-core-file-boundary-validation.md)
+has local Core regression evidence; native cross-platform CI and release gates
+remain pending. Path-reading upgrades require [operator-owned input roots](docs/FILE_ACCESS.md).
+
 Core issues after release are prioritized by correctness, security, project
 isolation, recovery, retrieval quality, and compatibility. New Writer,
 Workbench, desktop, or autonomous-agent behavior does not enter Core.

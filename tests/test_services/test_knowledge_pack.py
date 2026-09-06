@@ -12,6 +12,7 @@ import pytest
 
 from rka import __version__
 from rka.infra.database import Database
+from rka.infra.file_access import FileAccessPolicy
 from rka.infra.embeddings import EmbeddingService
 from rka.models.claim import ClaimCreate, ClaimScopeCondition, ClaimScopeWrite
 from rka.models.decision import DecisionCreate, DecisionOption
@@ -357,7 +358,7 @@ async def test_knowledge_pack_round_trip_imports_into_same_db_with_remapped_ids_
         note_svc = NoteService(db, project_id="proj_export")
         decision_svc = DecisionService(db, project_id="proj_export")
         literature_svc = LiteratureService(db, project_id="proj_export")
-        artifact_svc = ArtifactService(db, project_id="proj_export")
+        artifact_svc = ArtifactService(db, project_id="proj_export", file_policy=FileAccessPolicy([tmp_path]))
 
         decision = await decision_svc.create(
             DecisionCreate(
@@ -697,6 +698,7 @@ async def test_knowledge_pack_export_rejects_stale_artifact_file(
         artifact = await ArtifactService(
             db,
             project_id="proj_stale_artifact",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(
             filepath=str(artifact_path),
             created_by="system",
@@ -730,6 +732,7 @@ async def test_knowledge_pack_export_rejects_missing_artifact_file(
         artifact = await ArtifactService(
             db,
             project_id="proj_missing_export",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(filepath=str(artifact_path), created_by="system")
         artifact_path.unlink()
 
@@ -762,6 +765,7 @@ async def test_knowledge_pack_import_rejects_corrupted_bundled_artifact(
         artifact = await ArtifactService(
             db,
             project_id="proj_artifact_source",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(
             filepath=str(artifact_path),
             created_by="system",
@@ -1169,7 +1173,7 @@ async def test_pack_import_rebuilds_searchable_artifact_and_figure_vectors(
             ProjectCreate(id="proj_media_source", name="Media Source"),
             actor="system",
         )
-        source_artifacts = ArtifactService(db, project_id="proj_media_source")
+        source_artifacts = ArtifactService(db, project_id="proj_media_source", file_policy=FileAccessPolicy([tmp_path]))
         artifact = await source_artifacts.register(
             filepath=str(artifact_path),
             created_by="system",

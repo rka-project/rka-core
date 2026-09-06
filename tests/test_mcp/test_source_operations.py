@@ -127,6 +127,7 @@ async def test_mcp_reads_host_file_and_transports_exact_bytes(
     payload = b"host-only\x00binary\xff"
     source_path = tmp_path / "capture.bin"
     source_path.write_bytes(payload)
+    monkeypatch.setenv("RKA_HOST_FILE_ROOTS", json.dumps([str(tmp_path)]))
     captured: dict = {}
 
     class FakeClient:
@@ -172,12 +173,13 @@ def test_mcp_host_file_transfer_rejects_symlink_and_oversize(
 ) -> None:
     source_path = tmp_path / "capture.bin"
     source_path.write_bytes(b"12345")
+    monkeypatch.setenv("RKA_HOST_FILE_ROOTS", json.dumps([str(tmp_path)]))
     symlink = tmp_path / "capture-link.bin"
     symlink.symlink_to(source_path)
 
-    with pytest.raises(ValueError, match="symlink"):
+    with pytest.raises(PermissionError, match="symlink"):
         server._read_registered_source_file(str(symlink))
 
     monkeypatch.setenv("RKA_REGISTERED_SOURCE_MAX_BYTES", "4")
-    with pytest.raises(ValueError, match="maximum size"):
+    with pytest.raises(PermissionError, match="maximum size"):
         server._read_registered_source_file(str(source_path))

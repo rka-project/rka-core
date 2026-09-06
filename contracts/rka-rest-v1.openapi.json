@@ -3125,6 +3125,7 @@
             "items": {
               "$ref": "#/components/schemas/HostScannedFile"
             },
+            "maxItems": 2000,
             "type": "array"
           },
           "ignore_patterns": {
@@ -3159,6 +3160,7 @@
           "content_preview": {
             "anyOf": [
               {
+                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -3292,6 +3294,7 @@
       "IngestFileRequest": {
         "properties": {
           "content": {
+            "maxLength": 2097152,
             "title": "Content",
             "type": "string"
           },
@@ -7246,10 +7249,14 @@
           },
           "max_file_size_mb": {
             "default": 50.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
             "type": "number"
           },
           "max_files": {
             "default": 5000,
+            "exclusiveMinimum": 0.0,
+            "maximum": 5000.0,
             "type": "integer"
           },
           "use_llm": {

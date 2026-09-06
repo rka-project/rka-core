@@ -131,6 +131,7 @@ class SourceService(BaseService):
         *,
         storage_root: Path | None = None,
         max_bytes: int = 50 * 1024 * 1024,
+        file_policy=None,
     ):
         super().__init__(db, llm=llm, embeddings=embeddings, project_id=project_id)
         if not _SAFE_PROJECT_ID.fullmatch(project_id) or project_id in {".", ".."}:
@@ -140,6 +141,8 @@ class SourceService(BaseService):
         if max_bytes < 1:
             raise ValueError("max_bytes must be positive")
         self.max_bytes = max_bytes
+        from rka.infra.file_access import FileAccessPolicy
+        self.file_policy = file_policy if file_policy is not None else FileAccessPolicy()
         if storage_root is None:
             if db.db_path == ":memory:" or str(db.db_path).startswith("file:"):
                 storage_root = Path(tempfile.gettempdir()) / f"rka-{os.getpid()}-knowledge-packs"
@@ -155,6 +158,8 @@ class SourceService(BaseService):
         """
         if data.registered_by not in _REGISTRATION_ACTORS:
             raise SourceRegistrationError("invalid registered_by actor")
+        if data.filepath is not None:
+            self.file_policy.authorize(data.filepath)
         try:
             provenance_json = self._canonical_json(data.provenance)
         except (TypeError, ValueError) as exc:
@@ -549,34 +554,11 @@ class SourceService(BaseService):
         try:
             with os.fdopen(fd, "wb") as destination:
                 if data.filepath is not None:
-                    source_path = Path(data.filepath).expanduser()
-                    try:
-                        source_lstat = source_path.lstat()
-                    except FileNotFoundError as exc:
-                        raise SourceRegistrationError(
-                            f"source file not found: {source_path}"
-                        ) from exc
-                    if stat.S_ISLNK(source_lstat.st_mode):
-                        raise SourceRegistrationError("source filepath must not be a symlink")
-                    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                    source_fd = os.open(source_path, flags)
-                    with os.fdopen(source_fd, "rb") as source_file:
-                        opened_stat = os.fstat(source_file.fileno())
-                        if not stat.S_ISREG(opened_stat.st_mode):
-                            raise SourceRegistrationError(
-                                "source filepath must name a regular file"
-                            )
-                        while True:
-                            chunk = source_file.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            size += len(chunk)
-                            if size > self.max_bytes:
-                                raise SourceRegistrationError(
-                                    f"source exceeds maximum size of {self.max_bytes} bytes"
-                                )
-                            digest.update(chunk)
-                            destination.write(chunk)
+                    source_path = self.file_policy.authorize(data.filepath)
+                    payload = self.file_policy.read_bytes(source_path, max_bytes=self.max_bytes)
+                    size = len(payload)
+                    digest.update(payload)
+                    destination.write(payload)
                     default_title = source_path.name
                     filename = source_path.name
                     mime = data.mime

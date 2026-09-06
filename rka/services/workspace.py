@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rka.infra.ids import generate_id
+from rka.infra.file_access import FileAccessError, FileAccessPolicy, ScanBudget, MAX_SCAN_FILES
 from rka.models.workspace import (
     BootstrapReview,
     ContentHint,
@@ -38,8 +40,6 @@ from rka.services.classify import (
     extract_pdf_metadata_raw,
     extract_docx_text,
     detect_capabilities,
-    classify_extension,
-    extension_to_target,
     is_ignored,
 )
 
@@ -94,6 +94,8 @@ class WorkspaceService:
         note_service: "NoteService",
         literature_service: "LiteratureService",
         llm: "LLMClient | None" = None,
+        *,
+        file_policy=None,
     ):
         self.db = db
         self.academic = academic_service
@@ -101,6 +103,7 @@ class WorkspaceService:
         self.lit = literature_service
         self.llm = llm
         self.project_id = note_service.project_id
+        self.file_policy = file_policy if file_policy is not None else FileAccessPolicy()
 
     # ================================================================
     # Public: Scan
@@ -118,16 +121,15 @@ class WorkspaceService:
         """Scan a folder and classify files for ingestion.
 
         Args:
-            max_files: Safety cap — stop accepting files after this many
-                       (default 5 000).  Files beyond the cap are counted
-                       but not classified, keeping memory and LLM calls
-                       bounded even for very large workspaces.
+            max_files: Requested cap (legacy default 5 000); the operator
+                       ceiling is 2 000. Enumeration stops at the cap and
+                       returned counts are partial, not a full inventory.
 
         Returns a ScanManifest (ephemeral, not stored in DB).
         """
-        root = Path(folder_path).resolve()
-        if not root.is_dir():
-            raise ValueError(f"Not a directory: {folder_path}")
+        root = self.file_policy.directory(folder_path)
+        if not math.isfinite(max_file_size_mb) or max_file_size_mb <= 0 or max_files <= 0:
+            raise ValueError("Scan limits must be positive")
 
         scan_id = generate_id("scan")
         capabilities = self._detect_capabilities(use_llm)
@@ -138,38 +140,27 @@ class WorkspaceService:
         files: list[ScannedFile] = []
         warnings: list[str] = []
         total_found = 0
-        cap_reached = False
+        budget = ScanBudget(max_files=min(max_files, MAX_SCAN_FILES))
 
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
+        for path in self.file_policy.walk(root, ignores=ignores, budget=budget):
             total_found += 1
-
-            if self._should_ignore(path, root, ignores):
-                continue
-
-            if path.stat().st_size > max_bytes:
-                warnings.append(f"Skipped (too large): {path.relative_to(root)}")
-                continue
-
-            # Safety cap — stop classifying to keep memory bounded
-            if len(files) >= max_files:
-                if not cap_reached:
-                    cap_reached = True
-                    warnings.append(
-                        f"File cap reached ({max_files}). "
-                        f"Remaining files are counted but not classified. "
-                        f"Use ignore_patterns or max_files to adjust."
-                    )
-                continue
-
             try:
-                scanned = await self._classify_file(
-                    path, root, include_preview, capabilities, warnings, llm_health,
-                )
+                with self.file_policy.snapshot(path, max_bytes=max_bytes, budget=budget) as snapshot:
+                    scanned = await self._classify_file(
+                        snapshot, snapshot.parent, include_preview, capabilities, warnings, llm_health,
+                    )
+                scanned = scanned.model_copy(update={"path": str(path), "relative_path": str(path.relative_to(root))})
                 files.append(scanned)
+            except FileAccessError as exc:
+                if exc.code == "file_access_busy":
+                    raise
+                warnings.append(f"Skipped {path.relative_to(root)}: {exc}")
+                if budget.stopped:
+                    break
             except Exception as exc:
                 warnings.append(f"Error scanning {path.relative_to(root)}: {exc}")
+        if budget.stopped:
+            warnings.append(budget.stopped)
 
         # Check duplicates
         await self._check_duplicates(files)
@@ -197,6 +188,17 @@ class WorkspaceService:
     ) -> WorkspaceIngestResponse:
         """Ingest files from a scan manifest into the knowledge base."""
         manifest = request.manifest
+        root = self.file_policy.directory(manifest.root_path)
+        if len(manifest.files) > MAX_SCAN_FILES:
+            raise FileAccessError("Manifest file limit exceeded", code="file_access_limit", status_code=413)
+        # Validate every manifest path before any write, including dry-run/skip
+        # entries. Request-supplied roots, path fields, and hashes grant no authority.
+        for scanned in manifest.files:
+            path = self.file_policy.relative_file(root, scanned.relative_path)
+            if self.file_policy.authorize(scanned.path) != path:
+                raise FileAccessError("Manifest path fields disagree")
+            self.file_policy.check_file(path)
+        budget = ScanBudget()
         skip_set = set(request.skip_files)
         results: list[IngestResult] = []
         total_created = 0
@@ -233,14 +235,26 @@ class WorkspaceService:
                 total_created += 1
                 continue
 
-            result = await self._ingest_single_file(
-                scanned=scanned,
-                root_path=manifest.root_path,
-                phase=request.phase,
-                override_tags=request.override_tags,
-                source=request.source,
-                scan_id=manifest.scan_id,
-            )
+            try:
+                result = await self._ingest_single_file(
+                    scanned=scanned,
+                    root_path=manifest.root_path,
+                    phase=request.phase,
+                    override_tags=request.override_tags,
+                    source=request.source,
+                    scan_id=manifest.scan_id,
+                    budget=budget,
+                )
+            except FileAccessError as exc:
+                # Batch ingestion already reports per-file failures. Preserve
+                # successful records and their IDs if a later file changes.
+                result = IngestResult(
+                    relative_path=scanned.relative_path,
+                    category=scanned.category.value,
+                    ingestion_target=scanned.ingestion_target.value,
+                    success=False,
+                    error=str(exc),
+                )
             results.append(result)
             if result.success:
                 total_created += result.entity_count
@@ -529,9 +543,16 @@ class WorkspaceService:
         override_tags: list[str],
         source: str,
         scan_id: str,
+        budget: ScanBudget | None = None,
     ) -> IngestResult:
         """Ingest a single file into the knowledge base."""
-        full_path = Path(root_path) / scanned.relative_path
+        full_path = self.file_policy.relative_file(root_path, scanned.relative_path)
+        with self.file_policy.snapshot(full_path, budget=budget) as snapshot:
+            if self._hash_file(snapshot) != scanned.file_hash:
+                raise FileAccessError("File changed since scan; rescan before ingestion", code="file_changed", status_code=409)
+            return await self._ingest_snapshot(snapshot, scanned, phase, override_tags, source, scan_id)
+
+    async def _ingest_snapshot(self, full_path, scanned, phase, override_tags, source, scan_id):
         tags = list(set(scanned.proposed_tags + override_tags))
 
         try:
@@ -733,7 +754,7 @@ class WorkspaceService:
             authors=authors,
             year=year,
             abstract=abstract,
-            pdf_path=str(path),
+            pdf_path=scanned.path,  # Original locator, never the disposable parser snapshot.
             status="to_read",
             added_by="import",
             tags=tags,

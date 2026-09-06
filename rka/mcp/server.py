@@ -11,7 +11,6 @@ import base64
 import hashlib
 import json
 import os
-import stat
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
@@ -3445,9 +3444,10 @@ async def rka_scan_workspace_tree(
     computing hashes. Use the output to decide which subdirectories to
     scan in detail with rka_scan_workspace.
 
-    Works on any filesystem including slow external drives (exFAT,
-    network mounts) because it uses os.scandir (one syscall per
-    directory entry, no recursion into ignored dirs).
+    Requires RKA_HOST_FILE_ROOTS in the MCP process environment. Only
+    operator-authorized local directories are read; links and reparse
+    points are skipped. Entry, file, depth and elapsed-time budgets make
+    the result a bounded overview, not a complete filesystem inventory.
 
     Typical workflow:
       1. rka_scan_workspace_tree(folder_path)     → see the shape
@@ -3459,17 +3459,19 @@ async def rka_scan_workspace_tree(
         max_depth: How many levels deep to show (default 2; 0 = top-level only)
     """
     import asyncio
-    import os as _os
 
-    root = Path(folder_path).resolve()
-    if not root.is_dir():
-        return f"Error: {folder_path} is not a directory or does not exist."
+    import stat
+    from rka.infra.file_access import FileAccessPolicy, ScanBudget, scan_slot
+    policy = FileAccessPolicy.host()
+    root = policy.directory(folder_path)
 
     from rka.services.classify import DEFAULT_IGNORES
     ignores = set(DEFAULT_IGNORES)
 
     def _tree() -> list[dict]:
-        entries: list[dict] = []
+        budget = ScanBudget()
+        if not 0 <= max_depth <= 8:
+            raise ValueError("max_depth must be between 0 and 8")
 
         MAX_ENTRIES_PER_DIR = 200
 
@@ -3482,37 +3484,40 @@ async def rka_scan_workspace_tree(
             capped = False
             try:
                 entry_count = 0
-                with _os.scandir(dirpath) as it:
+                with policy.entries(dirpath) as it:
                     for entry in it:
+                        if not budget.check():
+                            capped = True
+                            break
+                        budget.entries += 1
                         entry_count += 1
                         if entry_count > MAX_ENTRIES_PER_DIR:
                             capped = True
-                            file_count = entry_count
                             break
                         if entry.name.startswith(".") or entry.name in ignores:
                             continue
                         try:
-                            is_dir = entry.is_dir(follow_symlinks=False)
+                            info = entry.stat(follow_symlinks=False)
                         except OSError:
                             continue
-                        if is_dir:
+                        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                            continue
+                        if stat.S_ISDIR(info.st_mode):
                             if depth < max_depth:
-                                subdirs.append(_scan_dir(Path(entry.path), depth + 1))
+                                subdirs.append(_scan_dir(dirpath / entry.name, depth + 1))
                             else:
                                 subdirs.append({
                                     "name": entry.name,
-                                    "path": entry.path,
+                                    "path": str(dirpath / entry.name),
                                     "depth": depth + 1,
                                     "file_count": "?",
                                     "size_mb": "?",
                                     "subdirs": [],
                                 })
-                        else:
+                        elif stat.S_ISREG(info.st_mode):
+                            budget.files += 1
                             file_count += 1
-                            try:
-                                total_bytes += entry.stat().st_size
-                            except OSError:
-                                pass
+                            total_bytes += info.st_size
             except PermissionError:
                 result["error"] = "permission denied"
 
@@ -3523,13 +3528,14 @@ async def rka_scan_workspace_tree(
                 result["capped"] = True
             total = file_count if isinstance(file_count, int) else MAX_ENTRIES_PER_DIR
             for sd in subdirs:
-                fc = sd.get("file_count", 0)
+                fc = sd.get("total_files_recursive", sd.get("file_count", 0))
                 if isinstance(fc, int):
                     total += fc
             result["total_files_recursive"] = total
             return result
 
-        return [_scan_dir(root, 0)]
+        with scan_slot():
+            return [_scan_dir(root, 0)]
 
     tree = await asyncio.to_thread(_tree)
     node = tree[0] if tree else {}
@@ -3540,7 +3546,7 @@ async def rka_scan_workspace_tree(
         sz = n.get("size_mb", 0)
         total = n.get("total_files_recursive", fc)
         if indent == 0:
-            lines = [f"{n['path']}/  ({total} files total)"]
+            lines = [f"{n['path']}/  ({total} files observed; bounded by depth and scan limits)"]
         else:
             detail = f"{fc} files, {sz} MB" if fc != "?" else "not scanned yet"
             lines = [f"{prefix}{n['name']}/  ({detail})"]
@@ -3586,114 +3592,22 @@ async def rka_scan_workspace(
         use_llm: Ignored (LLM classification not available in host-side path)
     """
     import asyncio
-    from rka.services.classify import (
-        classify_extension, detect_capabilities, detect_content_hint,
-        extension_to_target, hash_file, hint_to_type, is_ignored,
-        safe_read_text, extract_pdf_preview, DEFAULT_IGNORES,
-    )
+    from rka.services.classify import DEFAULT_IGNORES
 
-    root = Path(folder_path).resolve()
-    if not root.is_dir():
-        return f"Error: {folder_path} is not a directory or does not exist."
+    from rka.infra.file_access import FileAccessPolicy
+    policy = FileAccessPolicy.host()
+    root = policy.directory(folder_path)
 
     ignores = set(DEFAULT_IGNORES)
     ignores.update(ignore_patterns or [])
     max_bytes = int(max_file_size_mb * 1024 * 1024)
-    caps = detect_capabilities()
 
-    import os as _os
-    import time as _time
-
-    WALK_TIMEOUT_SECONDS = 30
-    MAX_WALK_FILES = 2000
-
-    def _walk_and_classify() -> tuple[list[dict], bool, str]:
-        """Walk + classify with a timeout and file cap.
-
-        Uses os.walk with in-place directory pruning (skips ignored
-        dirs before descending) for better performance on slow
-        filesystems (exFAT, network mounts).
-
-        Returns (files, timed_out, timeout_reason).
-        """
-        files: list[dict] = []
-        timed_out = False
-        timeout_reason = ""
-        t0 = _time.monotonic()
-        ext_ignores = {pat[1:] for pat in ignores if pat.startswith("*.")}
-
-        for dirpath, dirnames, filenames in _os.walk(root):
-            # Prune ignored directories before descending.
-            dirnames[:] = sorted(
-                d for d in dirnames
-                if d not in ignores and not d.startswith(".")
-            )
-            if _time.monotonic() - t0 > WALK_TIMEOUT_SECONDS:
-                timed_out = True
-                timeout_reason = (
-                    f"Walk timed out after {WALK_TIMEOUT_SECONDS}s "
-                    f"({len(files)} files found so far). The filesystem "
-                    f"may be slow (exFAT/network). Try scanning a specific "
-                    f"subdirectory instead of the root."
-                )
-                break
-            dp = Path(dirpath)
-            for fname in sorted(filenames):
-                if len(files) >= MAX_WALK_FILES:
-                    timed_out = True
-                    timeout_reason = (
-                        f"Stopped after {MAX_WALK_FILES} files. Use "
-                        f"ignore_patterns or scan a subdirectory."
-                    )
-                    break
-                ext = Path(fname).suffix.lower()
-                if ext and ext[1:] in ext_ignores:
-                    continue
-                if fname in ignores or fname.startswith("."):
-                    continue
-                p = dp / fname
-                try:
-                    size = p.stat().st_size
-                except OSError:
-                    continue
-                if size > max_bytes:
-                    continue
-                category = classify_extension(ext)
-                target = extension_to_target(ext)
-                rel = str(p.relative_to(root))
-                preview = None
-                content_hint = "general"
-                proposed_type = "finding"
-                if category.value not in ("pdf", "data", "unknown"):
-                    preview = safe_read_text(p, capabilities=caps, max_chars=500)
-                    if preview:
-                        hint = detect_content_hint(preview)
-                        content_hint = hint.value
-                        proposed_type = hint_to_type(hint)
-                elif category.value == "pdf":
-                    preview = extract_pdf_preview(p, caps)
-                try:
-                    fhash = hash_file(p)
-                except OSError:
-                    fhash = ""
-                files.append({
-                    "relative_path": rel,
-                    "filename": fname,
-                    "extension": ext,
-                    "size_bytes": size,
-                    "file_hash": fhash,
-                    "content_preview": (preview or "")[:500] if preview else None,
-                    "category": category.value,
-                    "content_hint": content_hint,
-                    "ingestion_target": target.value,
-                    "proposed_type": proposed_type,
-                    "proposed_tags": [],
-                })
-            if timed_out:
-                break
-        return files, timed_out, timeout_reason
-
-    all_host_files, walk_timed_out, walk_timeout_reason = await asyncio.to_thread(_walk_and_classify)
+    from rka.services.host_workspace import scan_host_files
+    all_host_files, walk_budget = await asyncio.to_thread(
+        scan_host_files, policy, root, ignores=ignores, max_bytes=max_bytes,
+    )
+    walk_timed_out = bool(walk_budget.stopped)
+    walk_timeout_reason = walk_budget.stopped
 
     # Cap files sent to the API to avoid >1MB payloads. The summary
     # always reports the total count; only the first max_scan_files
@@ -3721,7 +3635,6 @@ async def rka_scan_workspace(
     total_size = sum(f["size_bytes"] for f in all_host_files)
 
     files = data.get("files", [])
-    caps_resp = data.get("capabilities", {})
 
     lines = [
         f"Scanned: {folder_path}",
@@ -3733,6 +3646,8 @@ async def rka_scan_workspace(
 
     if walk_timed_out:
         lines.append(f"\n   WARNING: {walk_timeout_reason}")
+    if walk_budget.skipped:
+        lines.append(f"\n   WARNING: {walk_budget.skipped} oversized or unreadable files skipped")
     if truncated:
         lines.append(
             f"\n   NOTE: {len(all_host_files) - MAX_SCAN_FILES} files not shown. "
@@ -3805,89 +3720,19 @@ async def rka_bootstrap_workspace(
         dry_run: Preview what would be created without actually ingesting
     """
     import asyncio
-    from rka.services.classify import (
-        classify_extension, detect_capabilities, detect_content_hint,
-        extension_to_target, hash_file, hint_to_type, is_ignored,
-        safe_read_text, extract_pdf_metadata_raw, DEFAULT_IGNORES,
-    )
+    from rka.services.classify import DEFAULT_IGNORES
 
     # Step 1: Host-side scan (same logic as rka_scan_workspace)
-    root = Path(folder_path).resolve()
-    if not root.is_dir():
-        return f"Error: {folder_path} is not a directory or does not exist."
+    from rka.infra.file_access import FileAccessError, FileAccessPolicy, ScanBudget
+    policy = FileAccessPolicy.host()
+    root = policy.directory(folder_path)
 
-    import os as _os
-    import time as _time
-
+    from rka.services.host_workspace import scan_host_files, validate_host_manifest, read_host_content
     ignores = set(DEFAULT_IGNORES)
-    max_bytes = int(50.0 * 1024 * 1024)
-    caps = detect_capabilities()
-    skip_set = set(skip_files or [])
-
-    WALK_TIMEOUT_SECONDS = 30
-    MAX_WALK_FILES = 2000
-
-    def _walk_and_classify() -> list[dict]:
-        files: list[dict] = []
-        t0 = _time.monotonic()
-        ext_ignores = {pat[1:] for pat in ignores if pat.startswith("*.")}
-        for dirpath, dirnames, filenames in _os.walk(root):
-            dirnames[:] = sorted(
-                d for d in dirnames
-                if d not in ignores and not d.startswith(".")
-            )
-            if _time.monotonic() - t0 > WALK_TIMEOUT_SECONDS or len(files) >= MAX_WALK_FILES:
-                break
-            dp = Path(dirpath)
-            for fname in sorted(filenames):
-                if len(files) >= MAX_WALK_FILES:
-                    break
-                ext = Path(fname).suffix.lower()
-                if ext and ext[1:] in ext_ignores:
-                    continue
-                if fname in ignores or fname.startswith("."):
-                    continue
-                p = dp / fname
-                rel = str(p.relative_to(root))
-                if rel in skip_set:
-                    continue
-                try:
-                    size = p.stat().st_size
-                except OSError:
-                    continue
-                if size > max_bytes:
-                    continue
-                category = classify_extension(ext)
-                target = extension_to_target(ext)
-                preview = None
-                content_hint = "general"
-                proposed_type = "finding"
-                if category.value not in ("pdf", "data", "unknown"):
-                    preview = safe_read_text(p, capabilities=caps, max_chars=500)
-                    if preview:
-                        hint = detect_content_hint(preview)
-                        content_hint = hint.value
-                        proposed_type = hint_to_type(hint)
-                try:
-                    fhash = hash_file(p)
-                except OSError:
-                    fhash = ""
-                files.append({
-                    "relative_path": rel,
-                    "filename": fname,
-                    "extension": ext,
-                    "size_bytes": size,
-                    "file_hash": fhash,
-                    "content_preview": (preview or "")[:500] if preview else None,
-                    "category": category.value,
-                    "content_hint": content_hint,
-                    "ingestion_target": target.value,
-                    "proposed_type": proposed_type,
-                "proposed_tags": [],
-            })
-        return files
-
-    host_files = await asyncio.to_thread(_walk_and_classify)
+    host_files, scan_budget = await asyncio.to_thread(
+        scan_host_files, policy, root, ignores=ignores,
+        max_bytes=policy.max_bytes, skip_files=skip_files or [],
+    )
 
     # Get a scan manifest from the server (dedup + scan_id)
     async with _client(project_id) as c:
@@ -3899,6 +3744,9 @@ async def rka_bootstrap_workspace(
         r = await c.post("/api/workspace/scan/from-host", json=body, timeout=120.0)
         _raise_with_detail(r)
         manifest = r.json()
+
+    validate_host_manifest(manifest, host_files)
+    read_budget = ScanBudget()
 
     # Step 2: Host-side file reading + per-file ingest via content API
     scan_id = manifest.get("scan_id", "")
@@ -3918,34 +3766,9 @@ async def rka_bootstrap_workspace(
             total_skipped += 1
             continue
         total_processed += 1
-        full_path = root / rel
-
-        # Read content on HOST
-        content = ""
-        content_type = "text"
-        metadata: dict = {}
-
+        full_path = policy.relative_file(root, rel)
         cat = sf.get("category", "unknown")
         target = sf.get("ingestion_target", "skip")
-
-        if cat == "pdf":
-            content_type = "pdf_metadata"
-            pdf_meta = await asyncio.to_thread(extract_pdf_metadata_raw, full_path)
-            metadata = pdf_meta or {"title": full_path.stem}
-        elif cat == "bibtex" or target == "import_bibtex":
-            content_type = "bibtex"
-            content = await asyncio.to_thread(
-                lambda: safe_read_text(full_path, capabilities=caps) or ""
-            )
-        elif cat == "code":
-            content_type = "code"
-            content = await asyncio.to_thread(
-                lambda: safe_read_text(full_path, capabilities=caps) or ""
-            )
-        else:
-            content = await asyncio.to_thread(
-                lambda: safe_read_text(full_path, capabilities=caps) or ""
-            )
 
         if dry_run:
             result_items.append({
@@ -3957,6 +3780,18 @@ async def rka_bootstrap_workspace(
                 "entity_count": 0,
             })
             total_created += 1
+            continue
+
+        try:
+            content, content_type, metadata = await asyncio.to_thread(
+                read_host_content, policy, root, sf, read_budget,
+            )
+        except FileAccessError as exc:
+            total_errors += 1
+            result_items.append({
+                "relative_path": rel, "category": cat, "ingestion_target": target,
+                "success": False, "error": str(exc), "entity_ids": [], "entity_count": 0,
+            })
             continue
 
         async with _client(project_id) as c:
@@ -4013,6 +3848,11 @@ async def rka_bootstrap_workspace(
         f"   Processed: {result['total_processed']}, Created: {result['total_created']}, "
         f"Skipped: {result['total_skipped']}, Errors: {result['total_errors']}",
     ]
+
+    if scan_budget.stopped:
+        lines.append(f"WARNING: {scan_budget.stopped}")
+    if scan_budget.skipped:
+        lines.append(f"WARNING: {scan_budget.skipped} oversized or unreadable files skipped")
 
     # Show results grouped by category
     for item in result.get("results", []):
@@ -4660,53 +4500,22 @@ async def rka_get_sources(
 
 
 def _read_registered_source_file(filepath: str) -> tuple[str, str, str]:
-    """Read one host-local regular file for transport to the REST service."""
-
-    raw_limit = os.environ.get(
-        "RKA_REGISTERED_SOURCE_MAX_BYTES",
-        str(50 * 1024 * 1024),
-    )
+    """Read bounded host-local bytes only beneath operator-configured roots."""
+    from rka.infra.file_access import FileAccessPolicy
+    raw_limit = os.environ.get("RKA_REGISTERED_SOURCE_MAX_BYTES", str(50 * 1024 * 1024))
     try:
         max_bytes = int(raw_limit)
     except ValueError as exc:
         raise ValueError("RKA_REGISTERED_SOURCE_MAX_BYTES must be an integer") from exc
     if not 1 <= max_bytes <= 500 * 1024 * 1024:
-        raise ValueError(
-            "RKA_REGISTERED_SOURCE_MAX_BYTES must be between 1 and 524288000"
-        )
-
-    source_path = Path(filepath).expanduser()
-    try:
-        source_lstat = source_path.lstat()
-    except OSError as exc:
-        raise ValueError(f"source file is unavailable: {source_path}") from exc
-    if stat.S_ISLNK(source_lstat.st_mode):
-        raise ValueError("source filepath must not be a symlink")
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    digest = hashlib.sha256()
-    payload = bytearray()
-    try:
-        source_fd = os.open(source_path, flags)
-        with os.fdopen(source_fd, "rb") as source_file:
-            opened_stat = os.fstat(source_file.fileno())
-            if not stat.S_ISREG(opened_stat.st_mode):
-                raise ValueError("source filepath must name a regular file")
-            while chunk := source_file.read(1024 * 1024):
-                payload.extend(chunk)
-                if len(payload) > max_bytes:
-                    raise ValueError(
-                        f"source exceeds maximum size of {max_bytes} bytes"
-                    )
-                digest.update(chunk)
-    except ValueError:
-        raise
-    except OSError as exc:
-        raise ValueError(f"source file cannot be read: {source_path}") from exc
+        raise ValueError("RKA_REGISTERED_SOURCE_MAX_BYTES must be between 1 and 524288000")
+    policy = FileAccessPolicy.host()
+    path = policy.authorize(filepath)
+    payload = policy.read_bytes(path, max_bytes=max_bytes)
     return (
         base64.b64encode(payload).decode("ascii"),
-        source_path.name or "source.bin",
-        digest.hexdigest(),
+        path.name,
+        hashlib.sha256(payload).hexdigest(),
     )
 
 
