@@ -4624,7 +4624,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "tool": "rka_execute",
         "category": "hooks",
         "role_tag": "PI",
-        "summary": "Add an automation hook.",
+        "summary": "Add a brain_notify lifecycle hook.",
         "signature": (
             "rka_execute(operation='hook_add', *, project_id, "
             "event, handler_type, handler_config, name, "
@@ -4641,13 +4641,13 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "enums": {},
         "examples": [
             {
-                "description": "Add a hook that fires on decision creation.",
+                "description": "Record a notification when a session starts.",
                 "call": {
                     "operation": "hook_add",
                     "project_id": "prj_01ABC...",
-                    "event": "decision.created",
-                    "handler_type": "webhook",
-                    "handler_config": {"url": "https://..."},
+                    "event": "session_start",
+                    "handler_type": "brain_notify",
+                    "handler_config": {"content_template": {"message": "Review project context"}},
                     "name": "notify-pi",
                 },
             },
@@ -4658,7 +4658,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "hook_disable",
             "hook_delete",
         ],
-        "notes": None,
+        "notes": "Only brain_notify is supported. SQL and scheduled-only MCP handlers are rejected; legacy rows remain readable and can be disabled.",
     },
     "hook_enable": {
         "operation": "hook_enable",

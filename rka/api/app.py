@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import stat
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -325,7 +326,19 @@ def create_app(config: RKAConfig | None = None) -> FastAPI:
     # E so consumers can distinguish critical vs warning without knowing
     # the category list.
     from rka.services.base import EntityLinkValidationError
+    from rka.services.hook_policy import UnsupportedHookHandlerError
     from rka.services.knowledge_pack import KnowledgePackIntegrityError
+
+    @app.exception_handler(UnsupportedHookHandlerError)
+    async def unsupported_hook_handler(request: Request, exc: UnsupportedHookHandlerError):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": exc.code,
+                "detail": str(exc),
+                "handler_type": exc.handler_type,
+            },
+        )
 
     @app.exception_handler(EntityLinkValidationError)
     async def entity_link_validation_handler(
@@ -467,21 +480,42 @@ def create_app(config: RKAConfig | None = None) -> FastAPI:
     ]
     _web_dist = next((p for p in _candidates if p.is_dir()), None)
     if _web_dist and _web_dist.is_dir():
+        _web_dist = _web_dist.resolve()
         _index_html = _web_dist / "index.html"
         _assets_dir = _web_dist / "assets"
-        if _assets_dir.is_dir():
+        if _assets_dir.is_dir() and _assets_dir.resolve().is_relative_to(_web_dist):
             app.mount(
                 "/assets",
-                StaticFiles(directory=str(_assets_dir)),
+                StaticFiles(directory=str(_assets_dir.resolve())),
                 name="static-assets",
             )
 
         @app.get("/{full_path:path}")
         async def spa_fallback(full_path: str):
-            file_path = _web_dist / full_path
-            if full_path and file_path.is_file():
-                return FileResponse(str(file_path))
-            return FileResponse(str(_index_html))
+            try:
+                # Resolve before checking existence so neither '..' nor a
+                # symlink can select a file outside this instance's static root.
+                file_path = (_web_dist / full_path).resolve()
+                if not file_path.is_relative_to(_web_dist):
+                    raise HTTPException(status_code=404, detail="Not found")
+                if full_path:
+                    try:
+                        file_stat = file_path.stat()
+                    except (FileNotFoundError, NotADirectoryError):
+                        pass  # Missing client-side routes fall back to the SPA.
+                    else:
+                        # stat(), unlike is_file() on some Python versions,
+                        # leaves symlink loops visible to the controlled error path.
+                        if stat.S_ISREG(file_stat.st_mode):
+                            return FileResponse(str(file_path))
+                index_path = _index_html.resolve()
+                if not index_path.is_relative_to(_web_dist) or not index_path.is_file():
+                    raise HTTPException(status_code=404, detail="Not found")
+            except (OSError, ValueError, RuntimeError):
+                # Invalid names, inaccessible components, and symlink loops
+                # must not expose local filesystem errors or become a 500.
+                raise HTTPException(status_code=404, detail="Not found") from None
+            return FileResponse(str(index_path))
 
         logger.info("Web UI served from %s", _web_dist)
     else:

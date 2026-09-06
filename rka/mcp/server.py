@@ -1467,9 +1467,8 @@ async def rka_get_calibration_metrics(*, project_id: str) -> str:
 # ============================================================
 # 8 tools: registration (add/list/enable/disable/delete) + audit
 # (executions) + notifications queue (list/clear). Per
-# dec_01KPM1M58F0ARXCM0W0GZ476VD: mcp_tool handler is scheduled-only in v1
-# (logs intent; the Brain reads brain_notifications and invokes downstream
-# tools itself).
+# Historical SQL and scheduled-only MCP handlers remain readable but are
+# unsupported. Core only registers/enables/executes brain_notify handlers.
 
 
 @tool(category="hooks")
@@ -1488,12 +1487,8 @@ async def rka_add_hook(
     Args:
         event: One of session_start | post_journal_create | post_claim_extract
             | post_record_outcome | periodic.
-        handler_type: One of sql | mcp_tool | brain_notify.
-            - sql: parameterized statement; ``handler_config = {statement, params}``.
-              params can use ``{key}`` to interpolate from the event payload.
-            - mcp_tool: scheduled-only in v1 (logs intent; Brain invokes the
-              tool itself after reading brain_notifications). config =
-              ``{tool, args}``.
+        handler_type: Only brain_notify is supported. SQL and scheduled-only
+            MCP handlers return a tool error from the REST HTTP 422 rejection.
             - brain_notify: writes a row to brain_notifications. config =
               ``{severity, content_template}`` where content_template is a
               dict with ``{key}`` interpolation references.

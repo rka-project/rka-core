@@ -3130,23 +3130,22 @@ class CreateProjectArgs(UnscopedArgs):
 
 
 class HookAddArgs(ProjectScopedArgs):
-    """[PI] Add an automation hook.
+    """[PI] Add a brain_notify lifecycle hook.
 
-    Phase-X²' polish: the well-known ``handler_type`` -> required-key
-    cross-validation is enforced at the typed surface so Brain-emitted
-    ``{handler_type:'webhook', handler_config:{}}`` is rejected
-    pre-dispatch rather than dying at the service layer.
+    The service rejects unsupported handler types for every transport.
+    The string input and historical validator remain for wire compatibility;
+    they do not authorize SQL, webhooks, or scheduled-only MCP execution.
     """
 
     operation: Literal["hook_add"] = "hook_add"
 
     event: Annotated[
         str,
-        Field(description="Event name (e.g. 'decision.created')."),
+        Field(description="Lifecycle event, e.g. 'session_start' or 'post_journal_create'."),
     ]
     handler_type: Annotated[
         str,
-        Field(description="Handler type (e.g. 'webhook')."),
+        Field(description="Only 'brain_notify' is executable; other handlers are unsupported."),
     ]
     handler_config: Annotated[
         dict[str, Any],
@@ -3170,11 +3169,9 @@ class HookAddArgs(ProjectScopedArgs):
 
     @model_validator(mode="after")
     def _enforce_handler_config_shape(self) -> "HookAddArgs":
-        # Minimal cross-validation for the well-known handler types.
-        # Unknown handler types pass through (the service layer can
-        # validate exotic handler shapes); known types check their
-        # required keys here so Brain can't ship empty configs past
-        # the schema.
+        # Historical shape validation is retained for compatibility.
+        # Passing this validator does not grant execution: the service
+        # rejects every handler except brain_notify.
         required_by_type: dict[str, tuple[str, ...]] = {
             "webhook": ("url",),
         }
@@ -3575,8 +3572,8 @@ class ResolveContradictionArgs(ProjectScopedArgs):
 class HookEnableArgs(ProjectScopedArgs):
     """[PI] Enable a previously-defined hook.
 
-    Idempotent — enabling an already-enabled hook is a no-op at the
-    service layer.
+    Only brain_notify is supported. Legacy SQL/MCP handlers return HTTP 422,
+    even if already enabled. Enabling a supported hook is idempotent.
 
     Related: ``hook_add``, ``hook_disable``.
     """
@@ -3590,7 +3587,7 @@ class HookEnableArgs(ProjectScopedArgs):
 
 
 class HookDisableArgs(ProjectScopedArgs):
-    """[PI] Disable a hook (preserves config for later re-enable).
+    """[PI] Disable a hook (preserves config, including unsupported legacy handlers).
 
     Idempotent — disabling an already-disabled hook is a no-op at the
     service layer.

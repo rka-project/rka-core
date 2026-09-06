@@ -5,7 +5,18 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
-No unreleased changes.
+### Security
+
+- SPA fallback paths are confined to the resolved web root, including encoded
+  traversal and symlink targets; unsafe paths return 404 while normal client-side
+  navigation and assets remain available.
+- Lifecycle hooks only execute `brain_notify`. New SQL and scheduled-only MCP
+  hooks, and attempts to re-enable stored ones, return HTTP 422 with
+  `unsupported_hook_handler` in REST and the existing API-error tool failure in
+  MCP. Historical rows remain readable and can be disabled;
+  attempted execution records an error without running SQL or claiming a tool call
+  succeeded. This intentionally restricts legacy behavior across REST, typed MCP,
+  legacy tools and direct service calls. No schema/data migration is required.
 
 ## [3.0.0] — 2026-09-01 (RKA Core / Writer separation)
 

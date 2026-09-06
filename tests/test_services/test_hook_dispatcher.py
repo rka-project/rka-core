@@ -99,10 +99,10 @@ class TestBrainNotify:
 
 class TestSqlHandler:
     @pytest.mark.asyncio
-    async def test_sql_handler_runs_parameterized_insert(
+    async def test_legacy_sql_handler_cannot_run_even_parameterized_insert(
         self, db: Database, dispatcher: HookDispatcher,
     ):
-        # Create a target row via a sql-handler hook. Use audit_log (no FK).
+        # Seed an old hook directly: upgrades/imports retain these rows.
         await _register_hook(
             db,
             hook_id="hk_sql_1",
@@ -124,8 +124,12 @@ class TestSqlHandler:
         rows = await db.fetchall(
             "SELECT entity_id, details FROM audit_log WHERE entity_id = 'jrn_test1'",
         )
-        assert len(rows) == 1
-        assert rows[0]["details"] == "hooked"
+        assert rows == []
+        execution = await db.fetchone(
+            "SELECT status, error_message FROM hook_executions WHERE hook_id = ?", ["hk_sql_1"],
+        )
+        assert execution["status"] == "error"
+        assert "unsupported" in execution["error_message"]
 
     @pytest.mark.asyncio
     async def test_sql_handler_missing_statement_logs_error(
@@ -144,7 +148,7 @@ class TestSqlHandler:
             ["hk_sql_bad"],
         )
         assert row["status"] == "error"
-        assert "statement" in row["error_message"]
+        assert "unsupported" in row["error_message"]
 
     @pytest.mark.asyncio
     async def test_sql_handler_failure_silently_logged(
@@ -173,7 +177,7 @@ class TestSqlHandler:
 
 class TestMcpToolHandler:
     @pytest.mark.asyncio
-    async def test_mcp_tool_handler_logs_scheduled_result(
+    async def test_legacy_mcp_tool_handler_does_not_claim_execution(
         self, db: Database, dispatcher: HookDispatcher,
     ):
         await _register_hook(
@@ -195,11 +199,8 @@ class TestMcpToolHandler:
             "SELECT status, handler_result FROM hook_executions WHERE hook_id = ?",
             ["hk_mcp_1"],
         )
-        assert row["status"] == "success"
-        result = json.loads(row["handler_result"])
-        assert result["scheduled"] is True
-        assert result["tool"] == "rka_detect_contradictions"
-        assert result["args"]["entity_id"] == ["clm_a", "clm_b"]
+        assert row["status"] == "error"
+        assert row["handler_result"] is None
 
     @pytest.mark.asyncio
     async def test_mcp_tool_handler_missing_tool_logs_error(
