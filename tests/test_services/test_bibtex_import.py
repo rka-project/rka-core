@@ -48,6 +48,23 @@ async def test_bibtex_preserves_nested_fields_raw_source_and_import_origin(impor
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("via_file", [False, True])
+async def test_utf8_bom_does_not_hide_the_first_entry(importer, tmp_path, via_file):
+    text = "\ufeff" + BIBTEX
+    if via_file:
+        path = tmp_path / "bom-refs.bib"
+        path.write_text(text, encoding="utf-8")
+        result = await importer.import_bibtex_file(str(path))
+    else:
+        result = await importer.import_bibtex(text)
+    assert not result["errors"], result
+    assert len(result["imported"]) == result["total_parsed"] == 1, result
+    stored = await importer.lit.get(result["imported"][0]["id"])
+    assert stored.title == "A Nested AI Title"
+    assert stored.bibtex == BIBTEX
+
+
+@pytest.mark.asyncio
 async def test_bibtex_file_and_single_line_duplicates(importer, tmp_path):
     path = tmp_path / "refs.bib"
     path.write_text(BIBTEX, encoding="utf-8")

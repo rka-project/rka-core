@@ -17,7 +17,9 @@ class BibtexParseError(ValueError):
 class _Reader:
     def __init__(self, text: str):
         self.text = text
-        self.pos = 0
+        # A UTF-8 BOM is a file marker, not an implicit-comment line. Keep the
+        # original string so raw entry slices retain their exact source text.
+        self.pos = 1 if text.startswith("\ufeff") else 0
 
     def fail(self, reason: str):
         raise BibtexParseError(f"{reason} at character {self.pos}")

@@ -16,7 +16,8 @@ response shape is unchanged. Inspect `errors`, not merely HTTP 200.
 
 Without the optional dependency, Core supports a deliberately limited, iterative
 parser: braced or parenthesized entries, nested braced and quoted field values,
-numeric literals, percent comments and braced `@comment` blocks. Nesting is
+numeric literals, percent comments and braced `@comment` blocks. A leading UTF-8
+BOM is accepted without losing the first entry. Nesting is
 limited to 64 levels. String macros, `@string`, `@preamble`, concatenation, and
 parenthesized comments require `rka-core[academic]`; the base parser returns an
 actionable error rather than guessing or importing truncated metadata.
