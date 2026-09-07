@@ -49,6 +49,9 @@ not new remote visitor permissions.
 
 ## Compatibility and non-goals
 
+Follow-up: [E1c](2026-09-07-backfill-entrypoint-unification.md) unifies the pack
+and legacy CLI entry points described below as remaining at the E1b checkpoint.
+
 Existing response keys/state values remain; durable `job_` IDs replace volatile
 `bf_` IDs. New status fields expose attempt/lease/backoff/generation and error code.
 Pack-import progress and vector construction continue using the existing API

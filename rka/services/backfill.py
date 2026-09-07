@@ -1,4 +1,4 @@
-"""Backfill entity_links from legacy JSON arrays in journal, decisions, missions."""
+"""Entity-link repair and the enqueue-only legacy embedding adapter."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import logging
 from rka.infra.database import Database
 from rka.infra.embeddings import EmbeddingService
 from rka.infra.ids import generate_id
-from rka.services.artifacts import build_artifact_text, build_figure_text
 
 logger = logging.getLogger(__name__)
 
@@ -107,35 +106,21 @@ async def backfill_embeddings(
     include_figures: bool = True,
     include_claims: bool = True,
     force: bool = False,
-) -> dict[str, int]:
-    """Backfill artifact, figure, and claim embeddings for a project."""
-    counts = {"artifact": 0, "figure": 0, "claim": 0}
-    if include_artifacts:
-        counts["artifact"] = await _backfill_artifact_embeddings(
-            db,
-            embeddings,
-            project_id=project_id,
-            batch_size=batch_size,
-            force=force,
-        )
-    if include_figures:
-        counts["figure"] = await _backfill_figure_embeddings(
-            db,
-            embeddings,
-            project_id=project_id,
-            batch_size=batch_size,
-            force=force,
-        )
-    if include_claims:
-        counts["claim"] = await _backfill_claim_embeddings(
-            db,
-            embeddings,
-            project_id=project_id,
-            batch_size=batch_size,
-            force=force,
-        )
-    logger.info("Embedding backfill complete for %s: %s", project_id, counts)
-    return counts
+) -> dict:
+    """Compatibility enqueue adapter; return a job, never completion counts.
+
+    The caller must supply a service bound to the persisted generation. The
+    worker, not this legacy entry point, performs all model/vector work.
+    """
+    from rka.services.embedding_jobs import EmbeddingJobs
+
+    types = [name for name, enabled in (
+        ("artifact", include_artifacts), ("figure", include_figures), ("claim", include_claims),
+    ) if enabled]
+    return await EmbeddingJobs(db).request(
+        embeddings, types, project_id=project_id, batch_size=batch_size, force=force,
+        check_hashes=True,
+    )
 
 
 def _parse_json_list(val) -> list[str]:
@@ -174,116 +159,3 @@ async def _insert_link(
     except Exception as exc:
         logger.debug("Link insert failed: %s", exc)
         return False
-
-
-async def _backfill_artifact_embeddings(
-    db: Database,
-    embeddings: EmbeddingService,
-    *,
-    project_id: str,
-    batch_size: int,
-    force: bool,
-) -> int:
-    count = 0
-    offset = 0
-    while True:
-        rows = await db.fetchall(
-            """SELECT id, filename, filetype, mime, metadata
-               FROM artifacts
-               WHERE project_id = ?
-               ORDER BY created_at
-               LIMIT ? OFFSET ?""",
-            [project_id, batch_size, offset],
-        )
-        if not rows:
-            break
-        for row in rows:
-            text = build_artifact_text(
-                filename=row.get("filename") or "",
-                filetype=row.get("filetype"),
-                mime=row.get("mime"),
-                metadata=row.get("metadata"),
-            )
-            if not text:
-                continue
-            if force or await embeddings.needs_reembed("artifact", row["id"], text, project_id=project_id):
-                await embeddings.embed_and_store("artifact", row["id"], text, project_id=project_id)
-                count += 1
-        offset += len(rows)
-    return count
-
-
-async def _backfill_figure_embeddings(
-    db: Database,
-    embeddings: EmbeddingService,
-    *,
-    project_id: str,
-    batch_size: int,
-    force: bool,
-) -> int:
-    count = 0
-    offset = 0
-    while True:
-        rows = await db.fetchall(
-            """SELECT id, caption, summary, claims
-               FROM figures
-               WHERE project_id = ?
-               ORDER BY created_at
-               LIMIT ? OFFSET ?""",
-            [project_id, batch_size, offset],
-        )
-        if not rows:
-            break
-        for row in rows:
-            text = build_figure_text(
-                caption=row.get("caption"),
-                summary=row.get("summary"),
-                claims=row.get("claims"),
-            )
-            if not text:
-                continue
-            if force or await embeddings.needs_reembed("figure", row["id"], text, project_id=project_id):
-                await embeddings.embed_and_store("figure", row["id"], text, project_id=project_id)
-                count += 1
-        offset += len(rows)
-    return count
-
-
-async def _backfill_claim_embeddings(
-    db: Database,
-    embeddings: EmbeddingService,
-    *,
-    project_id: str,
-    batch_size: int,
-    force: bool,
-) -> int:
-    """Backfill claim embeddings into vec_claims for a project.
-
-    Defect 2 (mis_01KR1Z28QW9WYXG4VV8PGYWD8G): pre-v2.3.4, EmbeddingService
-    omitted `claim` from its table_map, so claim embeddings were never
-    written to vec_claims even though ClaimService enqueued the embed jobs
-    and embedding_metadata was updated. Run this once per project after
-    upgrading to v2.3.4 to populate vec_claims for existing claims.
-    """
-    count = 0
-    offset = 0
-    while True:
-        rows = await db.fetchall(
-            """SELECT id, content
-               FROM claims
-               WHERE project_id = ?
-               ORDER BY created_at
-               LIMIT ? OFFSET ?""",
-            [project_id, batch_size, offset],
-        )
-        if not rows:
-            break
-        for row in rows:
-            text = (row.get("content") or "").strip()
-            if not text:
-                continue
-            if force or await embeddings.needs_reembed("claim", row["id"], text, project_id=project_id):
-                await embeddings.embed_and_store("claim", row["id"], text, project_id=project_id)
-                count += 1
-        offset += len(rows)
-    return count

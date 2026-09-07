@@ -576,6 +576,9 @@ async def _active_index_rows_are_coherent(
 async def _active_index_has_full_coverage(
     db: Any,
     state: EmbeddingIndexState,
+    *,
+    project_id: str | None = None,
+    entity_types: tuple[str, ...] | None = None,
 ) -> bool:
     """Return whether every eligible canonical record has current metadata."""
 
@@ -605,9 +608,12 @@ async def _active_index_has_full_coverage(
         ),
     }
     for entity_type, (source_table, eligible_sql) in eligible_sources.items():
+        if entity_types is not None and entity_type not in entity_types:
+            continue
         pending = await db.fetchone(
             f"""SELECT 1 AS pending FROM {source_table} s
                 WHERE {eligible_sql}
+                  AND (? IS NULL OR s.project_id = ?)
                   AND NOT EXISTS (
                       SELECT 1 FROM embedding_metadata m
                       WHERE m.project_id = s.project_id
@@ -615,7 +621,7 @@ async def _active_index_has_full_coverage(
                         AND m.model_name = ? AND m.dimensions = ?
                   )
                 LIMIT 1""",
-            [entity_type, state.model_name, state.dimensions],
+            [project_id, project_id, entity_type, state.model_name, state.dimensions],
         )
         if pending:
             return False

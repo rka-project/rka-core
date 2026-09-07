@@ -9,7 +9,6 @@ import logging
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -28,17 +27,9 @@ from rka.api.deps import (
     require_project,
 )
 from rka.models.capabilities import CapabilityNegotiationError, CoreCapabilities
-from rka.models.knowledge_pack import KnowledgePackImportResult
 from rka.models.project import ProjectCreate, ProjectInfo, ProjectState, ProjectStateUpdate
-# Aliased: this module already defines a route handler called `get_status`
-# (project state), which would shadow the registry lookup — and shadow it
-# silently, since both are callables and the failure only shows at runtime.
-from rka.services.embedding_backfill import (
-    JobStatus,
-    get_status as get_job_status,
-    latest_status as latest_job_status,
-    register_job,
-)
+from rka.services.embedding_jobs import BackfillScopeBusy
+from rka.services.embedding_index import EmbeddingGenerationMismatch
 from rka.services.capabilities import (
     build_core_capabilities,
     validate_capability_requirements,
@@ -222,38 +213,17 @@ async def export_project_pack(
     )
 
 
-async def _index_imported_project(
-    svc: KnowledgePackService, project_id: str, status: JobStatus
-) -> None:
-    """Background half of an import: build the indexes, reporting progress."""
-    status.state = "running"
-    try:
-        status.total = await svc.count_indexable(project_id)
-        await svc.index_project(project_id, status=status)
-        status.state = "complete"
-    except Exception as exc:  # noqa: BLE001
-        status.state = "failed"
-        status.error = str(exc)
-        logger.exception("import indexing failed for %s", project_id)
-
-
 @router.post("/projects/import", status_code=202)
 async def import_project_pack(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     project_id: str | None = Form(default=None),
     project_name: str | None = Form(default=None),
     svc: KnowledgePackService = Depends(get_knowledge_pack_service),
 ):
-    """Import a knowledge pack. Rows land synchronously; indexes follow.
+    """Atomically import graph, lexical indexes and durable indexing receipt.
 
-    Returns 202 once every row is durable, with a job to poll for the index
-    build. The two phases differ by orders of magnitude — rows insert in
-    seconds, while indexing embeds each entity and runs for tens of minutes on
-    a real pack. Done inline it outlives any reasonable HTTP timeout, and the
-    caller is left with a failed request for an import that succeeded and is
-    still working; meanwhile the project is partly searchable with nothing to
-    say more is coming.
+    A separate worker builds vectors. Polling distinguishes lexical completion
+    from semantic readiness; a 202 never depends on process-local background work.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Knowledge pack file is required")
@@ -264,24 +234,12 @@ async def import_project_pack(
             project_name=project_name,
             defer_indexing=True,
         )
-        status_obj = register_job("imp")
-        background_tasks.add_task(
-            _index_imported_project, svc, result.project_id, status_obj
-        )
         return JSONResponse(
             status_code=202,
-            content={
-                **result.model_dump(),
-                "indexing": {
-                    "job_id": status_obj.job_id,
-                    "status_url": f"/api/projects/import/status?job_id={status_obj.job_id}",
-                    "note": (
-                        "Rows are durable. Search and semantic recall are "
-                        "incomplete until this job reports complete."
-                    ),
-                },
-            },
+            content=result.model_dump(),
         )
+    except (BackfillScopeBusy, EmbeddingGenerationMismatch) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 409 if "already exists" in message or "already contain" in message else 400
@@ -291,13 +249,13 @@ async def import_project_pack(
 
 
 @router.get("/projects/import/status")
-async def import_status(job_id: str | None = Query(default=None)):
+async def import_status(request: Request, job_id: str | None = Query(default=None)):
     """Poll an import's index build. Omit `job_id` for the most recent."""
-    status = get_job_status(job_id) if job_id else latest_job_status()
+    status = await KnowledgePackService(request.app.state.db).import_status(job_id)
     if status is None:
         raise HTTPException(
             status_code=404,
             detail=f"No import job found for job_id={job_id!r}" if job_id
-            else "No import job has run in this process",
+            else "No durable import receipt found",
         )
-    return status.snapshot()
+    return status

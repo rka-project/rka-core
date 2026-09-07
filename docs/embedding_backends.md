@@ -140,8 +140,8 @@ separate encoding and migration decisions. See the
 
 ## Durable backfill lifecycle (unreleased hardening)
 
-Startup, **Save configuration**, and `POST /api/config/embedding/backfill` only
-queue work. A separate **`rka worker`** loads the saved backend configuration and
+Startup, **Save configuration**, `POST /api/config/embedding/backfill`, pack imports
+and the legacy backfill CLI queue vector work. A separate **`rka worker`** loads the saved backend configuration and
 performs these backfills. Docker Compose already starts that worker; an API-only
 or foreground installation must start it separately using the same data/config
 directory. No worker means the job remains visibly pending, not complete.
@@ -162,7 +162,8 @@ and stores `failed` with `error_code=embedding_backfill_cancelled`; it does not
 promise to stop an already-running native or remote inference. A new explicit
 backfill POST retries without deleting the previous job record or good vectors.
 
-Identical or narrower requests reuse an active job. A wider/different scope
+Identical or narrower entity selections in the same project scope and force mode
+reuse an active job unless they request a tighter batch cap. A wider/different scope
 returns `409 embedding_backfill_busy`; wait for or cancel the active job before
 requesting the new scope. Invalid entity types return 422 before enqueueing.
 These remain installation-wide operator endpoints, not public demo permissions.
@@ -172,12 +173,45 @@ use Settings **Test connection**, then save to detect and persist the dimension.
 Deploy API and worker from the same release. No new schema is introduced; the
 existing queue is already excluded from research knowledge packs.
 
-This lifecycle applies to startup/config/manual backfill. Pack-import indexing
-still has its separate volatile progress and inline vector-building path, and
-the legacy project/force CLI is not the new recovery mechanism. Those remaining
-entry points, full native-inference process isolation, real-model memory limits,
-and offline dimension maintenance are separate release gates. See the
-[E1b design](superpowers/specs/2026-09-06-durable-embedding-backfill.md).
+Scoped/force/hash-check jobs use a distinct version-2 task type. An E1b worker
+rejects it instead of ignoring the project scope; an upgraded worker can resume
+the same job while attempts remain. This is fail-closed protection, not support
+for mixed-version operation: upgrade API and worker together before queueing work.
+
+Pack imports commit graph rows, strict lexical indexes, a durable import receipt
+and the embedding intent atomically. A scope conflict returns 409 and rolls back
+the import, including its own staged/published files; wait for or cancel the active
+backfill before retrying the upload. There is no in-process import vector loop.
+`GET /api/projects/import/status` accepts the receipt's `job_` ID and separates
+`lexical_state`, `semantic_state`, `embedding_job_id` and `semantic_ready`.
+No backend means `semantic_state=disabled`, never semantic ready. A receipt remains
+a historical reference to its linked job; later global repairs do not rewrite it.
+Old volatile `imp_` IDs are not recovered. `defer_indexing` remains accepted by the
+Python service, but both values now build lexical indexes transactionally and queue
+vectors. `index_project` is lexical repair only; its visited count is not a vector count.
+
+`rka backfill-embeddings --project PROJECT_ID` is now enqueue-only. It requires a
+saved configuration and compatible initialized generation, does not initialize or
+reshape vector tables, and prints a job ID instead of completed counts. Existing
+artifact/figure/claim flags and project scope are preserved. The default retains
+the legacy content-hash check: the worker repairs changed as well as missing rows,
+without re-embedding unchanged compatible inputs. `--batch-size` accepts
+1–128 as a cap, further reduced by worker resource limits. `--force` re-embeds the
+selected rows in the **current space**, replacing each vector atomically, without
+clearing tables. A failed force attempt retains prior good vectors; force retries
+may revisit successful rows within the finite attempt budget. The Python
+`backfill_embeddings` compatibility helper likewise returns a queued job, not counts.
+
+A scoped job can complete while other projects still lack vectors. It does not
+declare the global generation ready; run the normal all-types backfill to fill
+remaining gaps. Scoped import status exposes this distinction through
+`semantic_ready=false` and `index_state=reindexing`.
+
+This is not the E2 offline recovery/space-change command. Full native-inference
+process isolation, real-model memory limits, shared input/hash recipes and offline
+dimension maintenance remain release gates. See the
+[E1b design](superpowers/specs/2026-09-06-durable-embedding-backfill.md) and
+[entry-point design](superpowers/specs/2026-09-07-backfill-entrypoint-unification.md).
 
 ## Switching backends
 

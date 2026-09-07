@@ -12,6 +12,8 @@ from rka.services.embedding_index import (
 from rka.services.jobs import JobQueue
 
 JOB_TYPE = "embedding_backfill"
+SCOPED_JOB_TYPE = "embedding_backfill_v2"
+BACKFILL_JOB_TYPES = (JOB_TYPE, SCOPED_JOB_TYPE)
 
 
 class BackfillScopeBusy(RuntimeError):
@@ -33,9 +35,43 @@ class EmbeddingJobs:
         self.db = db
         self.queue = JobQueue(db)
 
-    async def request(self, embeddings, entity_types=None, *, automatic=False):
+    async def request(
+        self,
+        embeddings,
+        entity_types=None,
+        *,
+        automatic=False,
+        project_id=None,
+        force=False,
+        batch_size=8,
+        check_hashes=False,
+    ):
         types = validate_types(entity_types)
+        # E1b workers ignore optional payload fields on the old job type. A
+        # distinct type makes them reject, never broaden, scoped/force work.
+        version = 2 if project_id is not None or force or check_hashes or batch_size != 8 else 1
+        job_type = SCOPED_JOB_TYPE if version == 2 else JOB_TYPE
+        if not isinstance(force, bool):
+            raise ValueError("force must be a boolean")
+        if not isinstance(check_hashes, bool):
+            raise ValueError("check_hashes must be a boolean")
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= 128
+        ):
+            raise ValueError("batch_size must be an integer between 1 and 128")
         async with self.db.transaction():
+            if project_id is not None:
+                if (
+                    not isinstance(project_id, str)
+                    or not project_id
+                    or not await self.db.fetchone(
+                        "SELECT id FROM projects WHERE id=?",
+                        [project_id],
+                    )
+                ):
+                    raise ValueError("unknown project for embedding backfill")
             state = await get_embedding_index_state(self.db)
             if (
                 state is None
@@ -49,13 +85,19 @@ class EmbeddingJobs:
                 )
             key = f"embedding_backfill:{state.generation}"
             latest = await self.db.fetchone(
-                """SELECT * FROM jobs WHERE job_type=? AND project_id='proj_default'
+                """SELECT * FROM jobs WHERE job_type IN (?,?) AND project_id='proj_default'
                    AND dedupe_key=? ORDER BY rowid DESC LIMIT 1""",
-                [JOB_TYPE, key],
+                [*BACKFILL_JOB_TYPES, key],
             )
             latest = self.queue._decode_row(latest) if latest else None
             if latest and latest["status"] in {"pending", "running"}:
-                if not set(types).issubset(latest["payload"]["entity_types"]):
+                if (
+                    not set(types).issubset(latest["payload"]["entity_types"])
+                    or project_id != latest["payload"].get("project_id")
+                    or force != latest["payload"].get("force", False)
+                    or check_hashes != latest["payload"].get("check_hashes", False)
+                    or batch_size < latest["payload"].get("batch_size", 8)
+                ):
                     raise BackfillScopeBusy(
                         "an active backfill has a different scope; wait or cancel it first"
                     )
@@ -85,9 +127,9 @@ class EmbeddingJobs:
                 """UPDATE jobs SET status='failed', lease_until=NULL, worker_id=NULL,
                    lease_token=NULL, last_error='embedding_generation_superseded',
                    completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
-                   WHERE job_type=? AND project_id='proj_default' AND dedupe_key<>?
+                   WHERE job_type IN (?,?) AND project_id='proj_default' AND dedupe_key<>?
                    AND status IN ('pending','running')""",
-                [JOB_TYPE, key],
+                [*BACKFILL_JOB_TYPES, key],
             )
             await resume_embedding_transition(
                 self.db,
@@ -100,16 +142,20 @@ class EmbeddingJobs:
                 "UPDATE embedding_index_state SET status='reindexing', last_error=NULL WHERE singleton=1",
             )
             job_id = await self.queue.enqueue(
-                JOB_TYPE,
+                job_type,
                 dedupe_key=key,
                 priority=120,
                 payload={
-                    "version": 1,
+                    "version": version,
                     "generation": state.generation,
                     "space_signature": state.space_signature,
                     "model_name": state.model_name,
                     "dimensions": state.dimensions,
                     "entity_types": list(types),
+                    "project_id": project_id,
+                    "force": force,
+                    "batch_size": batch_size,
+                    "check_hashes": check_hashes,
                 },
             )
             return await self.queue.get(job_id)
@@ -117,12 +163,12 @@ class EmbeddingJobs:
     async def status(self, job_id=None):
         if job_id:
             row = await self.db.fetchone(
-                "SELECT * FROM jobs WHERE id=? AND job_type=?", [job_id, JOB_TYPE]
+                "SELECT * FROM jobs WHERE id=? AND job_type IN (?,?)", [job_id, *BACKFILL_JOB_TYPES]
             )
         else:
             row = await self.db.fetchone(
-                "SELECT * FROM jobs WHERE job_type=? ORDER BY rowid DESC LIMIT 1",
-                [JOB_TYPE],
+                "SELECT * FROM jobs WHERE job_type IN (?,?) ORDER BY rowid DESC LIMIT 1",
+                list(BACKFILL_JOB_TYPES),
             )
         if row is None:
             return None
@@ -144,6 +190,9 @@ class EmbeddingJobs:
             "elapsed_seconds": max(0, (end - start).total_seconds()),
             "error": error,
             "generation": job["payload"]["generation"],
+            "project_id": job["payload"].get("project_id"),
+            "force": job["payload"].get("force", False),
+            "check_hashes": job["payload"].get("check_hashes", False),
             "attempts": job["attempts"],
             "max_attempts": job["max_attempts"],
             "run_after": job["run_after"],
@@ -156,7 +205,7 @@ class EmbeddingJobs:
     async def cancel(self, job_id):
         async with self.db.transaction():
             job = await self.queue.get(job_id)
-            if not job or job["job_type"] != JOB_TYPE:
+            if not job or job["job_type"] not in BACKFILL_JOB_TYPES:
                 raise LookupError("unknown embedding backfill job")
             if job["status"] in {"pending", "running"}:
                 await self.db.execute(
@@ -175,6 +224,11 @@ class EmbeddingJobs:
 
     async def run(self, job, embeddings, queue):
         payload = job["payload"]
+        expected_version = 2 if job["job_type"] == SCOPED_JOB_TYPE else 1
+        if payload.get("version", 1) != expected_version:
+            raise RuntimeError(
+                "embedding_job_version_unsupported: upgrade the worker before retrying"
+            )
         if embeddings is None:
             raise RuntimeError("embedding_unavailable: worker has no configured backend")
         if any(
@@ -199,7 +253,14 @@ class EmbeddingJobs:
         async def progress(value):
             await queue.progress(job, {"processed": value.processed, "total": value.total})
 
-        await BackfillService(db=self.db, embeddings=embeddings).run_backfill(
+        await BackfillService(
+            db=self.db,
+            embeddings=embeddings,
+            project_id=payload.get("project_id"),
+            force=payload.get("force", False),
+            batch_size=payload.get("batch_size", 8),
+            check_hashes=payload.get("check_hashes", False),
+        ).run_backfill(
             status,
             progress_callback=progress,
             entity_types=validate_types(payload["entity_types"]),
@@ -210,6 +271,31 @@ class EmbeddingJobs:
 
     async def finish(self, job, *, success, queue):
         await queue.assert_owned(job)
+        payload = job["payload"]
+        if success and payload.get("project_id") is not None:
+            from rka.services.embedding_index import (
+                _active_index_has_full_coverage,
+                _active_index_rows_are_coherent,
+            )
+
+            state = await get_embedding_index_state(self.db)
+            if (
+                state is None
+                or state.generation != payload["generation"]
+                or not await _active_index_rows_are_coherent(self.db, state)
+                or not await _active_index_has_full_coverage(
+                    self.db,
+                    state,
+                    project_id=payload["project_id"],
+                    entity_types=validate_types(payload["entity_types"]),
+                )
+            ):
+                raise RuntimeError(
+                    "embedding_index_incomplete: scoped coverage/consistency gate failed"
+                )
+            if not await _active_index_has_full_coverage(self.db, state):
+                # A scoped success is not authority to certify other projects.
+                return
         await finish_embedding_transition(
             self.db,
             generation=job["payload"]["generation"],
@@ -230,9 +316,9 @@ class EmbeddingJobs:
             if state is None or state.status != "reindexing":
                 return
             row = await self.db.fetchone(
-                """SELECT status,last_error FROM jobs WHERE job_type=? AND dedupe_key=?
+                """SELECT status,last_error FROM jobs WHERE job_type IN (?,?) AND dedupe_key=?
                    ORDER BY rowid DESC LIMIT 1""",
-                [JOB_TYPE, f"embedding_backfill:{state.generation}"],
+                [*BACKFILL_JOB_TYPES, f"embedding_backfill:{state.generation}"],
             )
             if row and row["status"] == "failed":
                 await finish_embedding_transition(

@@ -1,7 +1,7 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界、I1/I2 已确认写入缺陷、E1a embedding 资源入口及 E1b 主回填生命周期的实现和本机验收。第五批完整 Core 3514 passed，基础安装 84 passed；pack/旧 CLI 等剩余 embedding 入口、真实模型 RSS、跨平台及发布门待验收，尚未推送、合并或部署。
+- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界、I1/I2 已确认写入缺陷、E1a embedding 资源入口、E1b 主回填生命周期及 E1c pack/旧 CLI 入口统一的实现和本机验收。第六批完整 Core 3536 passed，基础安装 79 passed；E2 离线重建、真实模型 RSS、跨平台及发布门待验收，尚未推送、合并或部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
@@ -124,8 +124,11 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
   generation 去重、heartbeat/lease 写入保护、进程丢失恢复、有限重试、取消及
   持久状态；[设计](../specs/2026-09-06-durable-embedding-backfill.md)、
   [第五批验收](2026-09-06-core-durable-backfill-validation.md)。全量 Core 3514 passed。
-  Pack 导入的 API 内向量循环、旧项目/force CLI、完整原生推理隔离及真实 RSS
-  尚未收口，不将 E1a/E1b 主链路等同 #158 关闭。
+  E1c 已移除 pack 的 API 内向量循环与旧项目/force CLI 的独立推理路径，保留
+  project scope、CLI 默认 hash 检查，并以 v2 job type 拒绝旧 worker 误执行；
+  [第六批验收](2026-09-07-core-backfill-entrypoints-validation.md)。最新完整 Core
+  3536 passed、基础安装 79 passed。完整原生推理隔离、真实 RSS 与 E2 尚未收口，
+  不将这些本机门等同 #158 关闭。
 - 第一提交补合成旧索引和长文输入回归；随后给所有 embedding 入口统一的有界
   输入策略、批次预算、并发限制、超时和可观测拒绝/截断行为。原始研究文本不改写。
 - 总 token 数之外，还要限制单条长度、批次数及最长序列造成的 padding；按后端
@@ -144,6 +147,8 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 - 依赖 E1 的输入策略和唯一任务所有权。实现 Core CLI 的状态检查、dry-run、
   受监督离线重建、resume；旧 backfill CLI 委托同一 generation-aware 服务。
+  E1c 已完成旧 CLI 的同空间入队委托和 hash compatibility；这不代替本节的
+  备份、独占、跨维度恢复及统一输入配方设计。
 - 使用持久配置而非忽略它后改用 env 默认。索引作用域遵守当前全库 generation
   模型，不能让单项目重建误清其他项目向量。
 - 重建前备份并确认 API/worker 已停止/不能访问旧 schema，独占维护状态下改变维度；

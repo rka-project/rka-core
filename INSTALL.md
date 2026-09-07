@@ -165,7 +165,8 @@ Open http://127.0.0.1:9712 in your browser to confirm the dashboard loads.
 
 > **First-run and upgrade indexing:** the default FastEmbed backend downloads roughly 520 MB on its first uncached use and stores it in the persistent Docker volume. An upgrade, import, or embedding-space change can also trigger a generation rebuild. The health endpoint and web UI may already be available while this work continues; semantic search temporarily falls back to lexical retrieval until the new generation is ready. Check **Settings → Embeddings** for progress before judging retrieval quality.
 
-> **Unreleased durable-backfill change:** startup, config-save and manual backfill
+> **Unreleased durable-backfill change:** startup, config-save, manual backfill,
+> pack-import vectors and the legacy backfill CLI
 > require the separate `rka-worker` service. An API health check alone does not
 > prove indexing is running. On macOS, Windows and Linux, use `docker compose ps`
 > and `docker compose logs --tail=50 rka-worker` to inspect it; update API and worker
@@ -173,6 +174,13 @@ Open http://127.0.0.1:9712 in your browser to confirm the dashboard loads.
 > database as `rka serve` (`start-all --foreground` starts only the API). Pending
 > jobs survive restart; exhausted/cancelled jobs need an explicit retry. Do not
 > delete vector tables to retry. See [backfill status, cancellation and retry](docs/embedding_backends.md#durable-backfill-lifecycle-unreleased-hardening).
+
+> A pack's 202 response includes a durable import receipt: lexical search is already
+> committed, while `semantic_state` may still be pending or disabled. An active
+> backfill with a different project/scope can cause import to return 409; that import
+> is rolled back, so retry the upload after the active task ends. The old
+> `backfill-embeddings --project ... --force` command now queues current-space work;
+> it does not change dimensions or constitute an offline recovery procedure.
 
 ### Step 1.5 — Install and verify the local MCP executable
 

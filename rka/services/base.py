@@ -198,7 +198,7 @@ class BaseService:
         "cluster": {"table": "fts_clusters", "columns": ["id", "label", "synthesis"]},
     }
 
-    async def _sync_fts(self, entity_type: str, entity_id: str, data: dict) -> None:
+    async def _sync_fts(self, entity_type: str, entity_id: str, data: dict, *, strict: bool = False) -> None:
         """Insert or update an entity's FTS5 index entry.
 
         The managed transaction becomes a savepoint when a caller already
@@ -227,6 +227,8 @@ class BaseService:
                     values,
                 )
         except Exception as exc:
+            if strict:
+                raise
             logger.warning(
                 "FTS5 sync failed for %s/%s: %s — search index NOT updated for "
                 "this entity; run `rka admin reindex` to repair.",

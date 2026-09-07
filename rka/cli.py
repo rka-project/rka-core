@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -526,7 +527,7 @@ def backfill():
 
 @main.command("backfill-embeddings")
 @click.option("--project", "project_id", default="proj_default", help="Project id to backfill")
-@click.option("--batch-size", default=50, show_default=True, type=int, help="Rows per batch")
+@click.option("--batch-size", default=50, show_default=True, type=click.IntRange(1, 128), help="Maximum rows per batch (worker resource limits may lower it)")
 @click.option("--figures/--no-figures", default=True, help="Backfill figure embeddings")
 @click.option("--artifacts/--no-artifacts", default=True, help="Backfill artifact embeddings")
 @click.option("--claims/--no-claims", default=True, help="Backfill claim embeddings")
@@ -539,37 +540,45 @@ def backfill_embeddings_cmd(
     claims: bool,
     force: bool,
 ):
-    """Backfill artifact, figure, and claim embeddings for a project."""
+    """Queue project-scoped artifact, figure and claim embeddings for the worker."""
     from rka.config import RKAConfig
     from rka.infra.database import Database
-    from rka.infra.embeddings import EmbeddingService
+    from rka.services.embedding_config import EmbeddingConfigService
+    from rka.services.worker import EnrichmentWorker
     from rka.services.backfill import backfill_embeddings
 
     config = RKAConfig()
+    if not any((artifacts, figures, claims)):
+        raise click.ClickException("Select at least one embedding entity type.")
+    if not config.embeddings_enabled:
+        raise click.ClickException("Embeddings are disabled; enable the configured backend before queueing.")
+    if not EmbeddingConfigService(config_dir=config.data_dir).config_path.is_file():
+        raise click.ClickException("No persisted embedding configuration; test and save it through Settings first.")
+    if not Path(config.database_url).is_file():
+        raise click.ClickException("No initialized RKA database; start the API with this data directory first.")
 
     async def _run():
         db = Database(config.database_url)
         await db.connect()
-        await db.initialize_schema()
-        await db.initialize_phase2_schema()
-        embeddings = EmbeddingService(model_name=config.embedding_model, db=db)
-        counts = await backfill_embeddings(
-            db,
-            embeddings,
-            project_id=project_id,
-            batch_size=batch_size,
-            include_artifacts=artifacts,
-            include_figures=figures,
-            include_claims=claims,
-            force=force,
-        )
-        await db.close()
-        return counts
+        try:
+            # No CLI schema reshape, default-model fallback or inference.
+            runner = EnrichmentWorker.boot(db=db, data_dir=config.data_dir)
+            await runner._refresh_embeddings_before_job()
+            return await backfill_embeddings(
+                db, runner.embeddings, project_id=project_id, batch_size=batch_size,
+                include_artifacts=artifacts, include_figures=figures,
+                include_claims=claims, force=force,
+            )
+        finally:
+            await db.close()
 
-    counts = asyncio.run(_run())
-    click.echo(f"Embedding backfill complete for {project_id}:")
-    for entity_type, count in counts.items():
-        click.echo(f"  {entity_type}: {count}")
+    try:
+        job = asyncio.run(_run())
+    except (ValueError, RuntimeError, sqlite3.Error) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Embedding backfill queued for {project_id}: {job['id']}")
+    click.echo("Run rka worker with the same data directory; this command did not perform inference.")
+    click.echo(f"Status: /api/config/embedding/backfill/status?job_id={job['id']}")
 
 
 @bootstrap.command("scan")

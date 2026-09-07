@@ -238,6 +238,7 @@ class EnrichmentWorker:
 
     async def run_once(self) -> bool:
         """Process one job if available."""
+        from rka.services.embedding_jobs import BACKFILL_JOB_TYPES
         job = await self.queue.claim_next(self.worker_id)
         if job is None:
             from rka.services.embedding_jobs import EmbeddingJobs
@@ -255,7 +256,7 @@ class EnrichmentWorker:
                     await assert_job_write(self.db)
                 finally:
                     execution.reset(token)
-                if job["job_type"] == "embedding_backfill":
+                if job["job_type"] in BACKFILL_JOB_TYPES:
                     from rka.services.embedding_jobs import EmbeddingJobs
                     await EmbeddingJobs(self.db).finish(job, success=True, queue=self.queue)
                 await self.queue.complete(job, result=result)
@@ -272,14 +273,14 @@ class EnrichmentWorker:
                 from rka.services.embedding_index import EmbeddingGenerationMismatch
                 await self.queue.fail(
                     job, durable_error,
-                    retry=not (job["job_type"] == "embedding_backfill" and isinstance(exc, EmbeddingGenerationMismatch)),
+                    retry=not (job["job_type"] in BACKFILL_JOB_TYPES and isinstance(exc, EmbeddingGenerationMismatch)),
                 )
             except JobLeaseLost:
                 logger.info(
                     "Worker job %s failure ignored after lease supersession",
                     job["id"],
                 )
-            if job["job_type"] == "embedding_backfill":
+            if job["job_type"] in BACKFILL_JOB_TYPES:
                 from rka.services.embedding_jobs import EmbeddingJobs
                 await EmbeddingJobs(self.db).reconcile_failed()
         return True
@@ -359,14 +360,15 @@ class EnrichmentWorker:
             await asyncio.sleep(self.poll_interval)
 
     async def _process_job(self, job: dict[str, Any]) -> dict[str, Any]:
+        from rka.services.embedding_jobs import BACKFILL_JOB_TYPES
         job_type = job["job_type"]
         project_id = job["project_id"]
         entity_id = job.get("entity_id")
 
-        if job_type in _EMBEDDING_JOB_TYPES or job_type == "embedding_backfill":
+        if job_type in _EMBEDDING_JOB_TYPES or job_type in BACKFILL_JOB_TYPES:
             await self._refresh_embeddings_before_job()
 
-        if job_type == "embedding_backfill":
+        if job_type in BACKFILL_JOB_TYPES:
             from rka.services.embedding_jobs import EmbeddingJobs
             return await EmbeddingJobs(self.db).run(job, self.embeddings, self.queue)
 

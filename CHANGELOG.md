@@ -7,6 +7,14 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- **Core hardening / backfill entry points (unreleased)**: pack imports now commit
+  lexical indexes and durable import receipts atomically with worker-owned vector
+  intents. Import status distinguishes lexical/semantic completion. The legacy
+  embedding CLI preserves project/type/force scope but only queues against saved
+  generation-compatible configuration; it no longer runs its own vector loop.
+  Same-space force writes replace rows atomically without clearing tables. See
+  `docs/embedding_backends.md` for busy/retry and compatibility changes.
+
 - Startup/config/manual embedding backfills are durable queue intents executed
   by the separate Core worker, with heartbeat, generation/lease-fenced writes,
   finite retry, persistent progress, cancellation and missing-row resume after

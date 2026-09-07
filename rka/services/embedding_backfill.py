@@ -484,11 +484,16 @@ class BackfillService:
         "complete" otherwise.
     """
 
-    def __init__(self, *, db: Any, embeddings: Any, batch_size: int = 8) -> None:
+    def __init__(self, *, db: Any, embeddings: Any, batch_size: int = 8,
+                 project_id: str | None = None, force: bool = False,
+                 check_hashes: bool = False) -> None:
         if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 128:
             raise ValueError("batch_size must be an integer between 1 and 128")
         self._db = db
         self._embeddings = embeddings
+        self._project_id = project_id
+        self._force = force
+        self._check_hashes = check_hashes
         self._batch_size = batch_size
         limits = getattr(getattr(embeddings, "backend", None), "resource_limits", None)
         if isinstance(limits, EmbeddingResourceLimits):
@@ -546,9 +551,11 @@ class BackfillService:
         per_type_totals: dict[str, int] = {}
         for et in types:
             cfg = _ENTITY_BACKFILL_CONFIGS[et]
-            row = await self._db.fetchone(
-                cfg.pending_count_sql, [count_model, count_dim]
-            )
+            if self._check_hashes and not self._force:
+                per_type_totals[et] = await self._hash_pending_count(cfg, count_model, count_dim)
+                continue
+            sql, params = self._selection(cfg, count_model, count_dim)
+            row = await self._db.fetchone(sql, params)
             per_type_totals[et] = int((row or {}).get("n") or 0)
         status.total = sum(per_type_totals.values())
         await _emit_progress(progress_callback, status)
@@ -589,6 +596,53 @@ class BackfillService:
         await _emit_progress(progress_callback, status)
         return status
 
+    def _selection(self, cfg, model, dim, last_id=None):
+        if self._project_id is None and not self._force and not self._check_hashes:
+            if last_id is None:
+                return cfg.pending_count_sql, [model, dim]
+            return cfg.pending_cursor_sql, [model, dim, last_id, self._batch_size]
+        # Identifiers are fixed service configs; every request value is bound.
+        sql = f"""SELECT {'COUNT(*) AS n' if last_id is None else 's.*'}
+            FROM {cfg.source_table} s
+            WHERE (? IS NULL OR s.project_id = ?)
+              AND (? OR NOT EXISTS (
+                SELECT 1 FROM embedding_metadata m
+                WHERE m.project_id=s.project_id AND m.entity_type=?
+                  AND m.entity_id=s.{cfg.id_column} AND m.model_name=? AND m.dimensions=?
+              ))"""
+        params = [self._project_id, self._project_id, self._force or self._check_hashes, cfg.entity_type, model, dim]
+        if last_id is not None:
+            sql += f" AND s.{cfg.id_column}>? ORDER BY s.{cfg.id_column} LIMIT ?"
+            params.extend([last_id, self._batch_size])
+        return sql, params
+
+    async def _needs_hash_repair(self, cfg, row, text):
+        return await self._embeddings.needs_reembed(
+            cfg.entity_type, row[cfg.id_column], text,
+            project_id=row.get("project_id") or "proj_default",
+        )
+
+    async def _hash_pending_count(self, cfg, model, dim):
+        # Legacy CLI checked content hashes as well as model/dimension. Keep
+        # that behavior without loading the corpus or calling the provider.
+        from rka.services.job_execution import assert_job_write
+        count, last_id = 0, ""
+        while True:
+            await assert_job_write(self._db)
+            sql, params = self._selection(cfg, model, dim, last_id)
+            rows = await self._db.fetchall(sql, params)
+            if not rows:
+                return count
+            for row in rows:
+                try:
+                    text = cfg.compose_text(row)
+                except Exception:
+                    count += 1  # execution will record the bounded row error
+                    continue
+                if text and await self._needs_hash_repair(cfg, row, text):
+                    count += 1
+            last_id = rows[-1][cfg.id_column]
+
     async def _backfill_one_type(
         self,
         cfg: _EntityBackfillConfig,
@@ -606,10 +660,8 @@ class BackfillService:
         last_id = ""
         row_errors = _RowErrors()
         while True:
-            rows = await self._db.fetchall(
-                cfg.pending_cursor_sql,
-                [model_name, embed_dim, last_id, self._batch_size],
-            )
+            sql, params = self._selection(cfg, model_name, embed_dim, last_id)
+            rows = await self._db.fetchall(sql, params)
             if not rows:
                 break
 
@@ -622,6 +674,8 @@ class BackfillService:
                     row_errors.record(r.get(cfg.id_column), exc)
                     continue
                 if text:
+                    if self._check_hashes and not self._force and not await self._needs_hash_repair(cfg, r, text):
+                        continue
                     validate = getattr(self._embeddings, "validate_document", None)
                     if validate is not None:
                         try:
