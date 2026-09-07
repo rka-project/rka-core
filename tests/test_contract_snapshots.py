@@ -59,16 +59,17 @@ def test_rest_v1_surface_and_dispositions_are_locked() -> None:
     assert snapshot["x-rka-operation-counts"] == {
         "ownership": {
             "agentic-unsupported": 10,
-            "core": 165,
+            "core": 166,
             "core-legacy": 6,
             "writer-compatibility": 53,
         },
-        "core_maturity": {"preview": 28, "stable": 137},
+        "core_maturity": {"preview": 28, "stable": 138},
     }
     assert len(AGENTIC_REST_OPERATIONS) == 10
     assert len(CORE_LEGACY_REST_OPERATIONS) == 6
     methods = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 137
+    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 138
+    assert "post" in snapshot["paths"]["/api/config/embedding/backfill/{job_id}/cancel"]
     snapshotted_operations = {
         (method.upper(), path)
         for path, item in snapshot["paths"].items()

@@ -43,7 +43,11 @@ class NoteService(BaseService):
     async def create(self, data: JournalEntryCreate, actor: str | None = None) -> JournalEntry:
         """Create a new journal entry."""
         entry_id = generate_id("journal")
-        source = actor or data.source
+        # An import executor is not the author of the supplied note. Keep
+        # source/verbatim attribution intact and use actor only for execution
+        # provenance (events, audit and graph links).
+        source = data.source
+        actor_val = self._validate_actor(actor if actor is not None else source)
         related_decisions = (
             None
             if data.related_decisions is None
@@ -106,7 +110,7 @@ class NoteService(BaseService):
                 link_type="references",
                 target_type="decision",
                 target_ids=related_decisions,
-                created_by=source or "system",
+                created_by=actor_val,
             )
             await self._replace_outgoing_links(
                 source_type="journal",
@@ -114,7 +118,7 @@ class NoteService(BaseService):
                 link_type="cites",
                 target_type="literature",
                 target_ids=related_literature,
-                created_by=source or "system",
+                created_by=actor_val,
             )
             await self._replace_incoming_links(
                 target_type="journal",
@@ -122,7 +126,7 @@ class NoteService(BaseService):
                 link_type="produced",
                 source_type="mission",
                 source_ids=[data.related_mission] if data.related_mission else [],
-                created_by=source or "system",
+                created_by=actor_val,
             )
 
             # Materialize supersession for graph-only traversal surfaces.
@@ -133,7 +137,7 @@ class NoteService(BaseService):
                     "supersedes",
                     "journal",
                     data.supersedes,
-                    created_by=source or "system",
+                    created_by=actor_val,
                 )
 
             # Sync cheap deterministic FTS now; enrichment is queued.
@@ -164,11 +168,11 @@ class NoteService(BaseService):
                 event_type=event_type,
                 entity_type="journal",
                 entity_id=entry_id,
-                actor=source,
+                actor=actor_val,
                 summary=f"{data.type}: {data.content[:100]}",
                 phase=data.phase,
             )
-            await self.audit("create", "journal", entry_id, source)
+            await self.audit("create", "journal", entry_id, actor_val)
 
             # Hook failures remain non-fatal, but their successful writes now
             # share the journal aggregate's transaction.

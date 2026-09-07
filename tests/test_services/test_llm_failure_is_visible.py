@@ -32,12 +32,14 @@ class _NoDuplicates:
         return None
 
 
-def _svc(llm) -> WorkspaceService:
+def _svc(llm, root) -> WorkspaceService:
     """A service with only the pieces the scan path touches."""
     notes = types.SimpleNamespace(project_id="prj_test")
+    from rka.infra.file_access import FileAccessPolicy
     return WorkspaceService(
         db=_NoDuplicates(), academic_service=None, note_service=notes,
         literature_service=None, llm=llm,
+        file_policy=FileAccessPolicy([root]),
     )
 
 
@@ -81,7 +83,7 @@ class TestOneBadFileDoesNotDisableTheScan:
         llm = _FakeLLM(failing={"b.md"})
         root = _workspace(tmp_path, ["a.md", "b.md", "c.md", "d.md"])
 
-        manifest = await _svc(llm).scan(root)
+        manifest = await _svc(llm, root).scan(root)
 
         assert sorted(llm.calls) == ["a.md", "b.md", "c.md", "d.md"], (
             "one file's invalid response must not stop the others being asked"
@@ -96,7 +98,7 @@ class TestOneBadFileDoesNotDisableTheScan:
         llm = _FakeLLM(always=True)
         root = _workspace(tmp_path, [f"f{i}.md" for i in range(10)])
 
-        manifest = await _svc(llm).scan(root)
+        manifest = await _svc(llm, root).scan(root)
 
         assert len(llm.calls) == _LLM_FAILURE_THRESHOLD, (
             f"a dead backend must cost {_LLM_FAILURE_THRESHOLD} files, not all "
@@ -129,7 +131,7 @@ class TestTheScanSaysWhatHappened:
     @pytest.mark.asyncio
     async def test_a_failed_scan_does_not_return_an_empty_warnings_list(self, tmp_path):
         llm = _FakeLLM(always=True)
-        manifest = await _svc(llm).scan(_workspace(tmp_path, ["a.md", "b.md", "c.md", "d.md"]))
+        manifest = await _svc(llm, tmp_path).scan(_workspace(tmp_path, ["a.md", "b.md", "c.md", "d.md"]))
         assert manifest.warnings, (
             "HTTP 200 with warnings=[] is the same response as a scan with no "
             "LLM configured at all"

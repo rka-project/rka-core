@@ -30,6 +30,9 @@ class DummyEmbeddings(EmbeddingService):
     async def embed_document(self, text: str) -> list[float]:
         return self._vector(text)
 
+    async def embed_batch(self, texts, **kwargs):
+        return [self._vector(text) for text in texts]
+
 
 async def _ensure_project(db: Database, project_id: str, name: str) -> None:
     await db.execute(
@@ -96,7 +99,8 @@ class TestArtifactFigureSearch:
         await _ensure_project(db, "proj_alpha", "Alpha")
         await _ensure_project(db, "proj_beta", "Beta")
 
-        alpha_artifacts = ArtifactService(db=db, llm=None, embeddings=dummy_embeddings, project_id="proj_alpha")
+        from rka.infra.file_access import FileAccessPolicy
+        alpha_artifacts = ArtifactService(db=db, llm=None, embeddings=dummy_embeddings, project_id="proj_alpha", file_policy=FileAccessPolicy([tmp_path]))
         beta_search = SearchService(db=db, embeddings=dummy_embeddings, project_id="proj_beta")
         alpha_search = SearchService(db=db, embeddings=dummy_embeddings, project_id="proj_alpha")
 
@@ -177,16 +181,26 @@ class TestEmbeddingBackfill:
         )
         await db.commit()
 
-        counts = await backfill_embeddings(
+        from rka.services.embedding_index import reconcile_embedding_index
+        from rka.services.embedding_jobs import EmbeddingJobs
+        from rka.services.worker import EnrichmentWorker
+        state = (await reconcile_embedding_index(
+            db, space_signature=dummy_embeddings.space_signature,
+            model_name=dummy_embeddings.model_name, dim=dummy_embeddings.dim,
+        )).state
+        dummy_embeddings.bind_index_generation(state.generation, space_signature=state.space_signature)
+        job = await backfill_embeddings(
             db,
             dummy_embeddings,
             project_id="proj_alpha",
             batch_size=10,
             force=True,
         )
-        # Defect 2 (mis_01KR1Z28QW9WYXG4VV8PGYWD8G T3): backfill_embeddings now
-        # also iterates claims; proj_alpha has none, so claim count is 0.
-        assert counts == {"artifact": 1, "figure": 1, "claim": 0}
+        assert job["status"] == "pending" and job["payload"]["project_id"] == "proj_alpha"
+        assert job["payload"]["entity_types"] == ["claim", "artifact", "figure"]
+        assert await EnrichmentWorker(db=db, embeddings=dummy_embeddings).run_once()
+        status = await EmbeddingJobs(db).status(job["id"])
+        assert status["state"] == "complete" and status["processed"] == 2
 
         rows = await db.fetchall(
             """SELECT entity_type, entity_id

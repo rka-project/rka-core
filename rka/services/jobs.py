@@ -235,7 +235,7 @@ class JobQueue:
             if cursor.rowcount != 1:
                 raise JobLeaseLost(f"Job {job['id']} lease was superseded")
 
-    async def fail(self, job: dict[str, Any], error: str) -> None:
+    async def fail(self, job: dict[str, Any], error: str, *, retry: bool = True) -> None:
         """Requeue with backoff, or mark failed after max_attempts."""
         lease_token = job.get("lease_token")
         worker_id = job.get("worker_id")
@@ -244,7 +244,7 @@ class JobQueue:
         attempts = int(job.get("attempts") or 0)
         max_attempts = int(job.get("max_attempts") or self.default_max_attempts)
         now = _now()
-        terminal = attempts >= max_attempts
+        terminal = not retry or attempts >= max_attempts
         status = "failed" if terminal else "pending"
         run_after = _after_seconds(self._backoff_seconds(attempts)) if not terminal else now
         async with self.db.transaction():
@@ -282,6 +282,32 @@ class JobQueue:
             )
             if cursor.rowcount != 1:
                 raise JobLeaseLost(f"Job {job['id']} lease was superseded")
+
+    async def assert_owned(self, job: dict[str, Any]) -> None:
+        """Call inside the write transaction to fence stale inference results."""
+        row = await self.db.fetchone(
+            """SELECT 1 AS owned FROM jobs WHERE id=? AND status='running'
+               AND worker_id=? AND lease_token=? AND lease_until > ?""",
+            [job["id"], job.get("worker_id"), job.get("lease_token"), _now()],
+        )
+        if not row:
+            raise JobLeaseLost(f"Job {job['id']} lease was superseded or expired")
+
+    async def renew(self, job: dict[str, Any]) -> None:
+        async with self.db.transaction():
+            await self.assert_owned(job)
+            await self.db.execute(
+                "UPDATE jobs SET lease_until=?, updated_at=? WHERE id=?",
+                [_after_seconds(self.lease_seconds), _now(), job["id"]],
+            )
+
+    async def progress(self, job: dict[str, Any], result: dict[str, Any]) -> None:
+        async with self.db.transaction():
+            await self.assert_owned(job)
+            await self.db.execute(
+                "UPDATE jobs SET result=?, updated_at=? WHERE id=?",
+                [json.dumps(result), _now(), job["id"]],
+            )
 
     @staticmethod
     def _backoff_seconds(attempt: int) -> int:

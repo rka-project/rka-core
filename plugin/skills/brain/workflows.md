@@ -517,21 +517,22 @@ rka_evaluate_gate(
 
 ## Hook Registration (v2.3 — Mission 2)
 
-The hook system (`dec_01KPJXN5QJ029FC93EK2WRNDFJ`) lets the Brain register handlers that fire on lifecycle events without consuming Brain attention between sessions. v1 supports five events (`session_start`, `post_journal_create`, `post_claim_extract`, `post_record_outcome`, `periodic`) and three handler types (`sql`, `mcp_tool`, `brain_notify`). Hooks are project-scoped; failures are silent and logged to `hook_executions`; the dispatcher caps cascades at depth 3.
+The hook system (`dec_01KPJXN5QJ029FC93EK2WRNDFJ`) lets the Brain register notifications that fire on lifecycle events without consuming Brain attention between sessions. It supports five events (`session_start`, `post_journal_create`, `post_claim_extract`, `post_record_outcome`, `periodic`) and one executable handler type, `brain_notify`. Hooks are project-scoped; handler failures are logged to `hook_executions` without aborting the originating operation; the dispatcher caps cascades at depth 3.
 
 ### The brain_notify pattern (most useful in v1)
 
 `brain_notify` writes a row to `brain_notifications`. The Brain reads the queue at session start (via `rka_get_brain_notifications`) and acts on the contents itself. This is the structural answer to "Brain forgets to run maintenance" — findings accumulate asynchronously while the Brain isn't present, then surface when it is.
 
-### `mcp_tool` is scheduled-only in v1
+### Unsupported legacy handlers
 
-Per `dec_01KPM1M58F0ARXCM0W0GZ476VD`: the `mcp_tool` handler logs intent (`scheduled=true, tool, args`) to `hook_executions` but does **not** invoke the tool. The Brain reads brain_notifications and invokes downstream tools itself using normal MCP access. Real in-process invocation is a clean v1.1 upgrade path (no schema migration; behavior-only change).
+`sql` and `mcp_tool` cannot be registered or re-enabled (HTTP 422). Existing records remain readable and can be disabled, but dispatch records an error without executing their configuration. The former `mcp_tool` placeholder did not invoke tools; its historical `scheduled=true` logs are not evidence of execution. Use `brain_notify` to surface work, then invoke any downstream operation explicitly through normal MCP access. Hooks do not grant additional permissions.
 
 ### Three recommended default hooks
 
 1. **Session-start maintenance nudge** — surfaces a reminder on every fresh project session.
    ```
    rka_add_hook(
+     project_id="prj_...",
      event="session_start",
      handler_type="brain_notify",
      handler_config={"severity": "info", "content_template": {
@@ -545,6 +546,7 @@ Per `dec_01KPM1M58F0ARXCM0W0GZ476VD`: the `mcp_tool` handler logs intent (`sched
 2. **Drift watch** — fires after every `rka_record_outcome` with the flattened metric snapshot. The Brain decides whether the surfaced rates warrant follow-up.
    ```
    rka_add_hook(
+     project_id="prj_...",
      event="post_record_outcome",
      handler_type="brain_notify",
      handler_config={"severity": "warning", "content_template": {
@@ -559,17 +561,18 @@ Per `dec_01KPM1M58F0ARXCM0W0GZ476VD`: the `mcp_tool` handler logs intent (`sched
    ```
    Payload fields available for `{key}` interpolation: `decision_id`, `outcome`, `brier_score`, `ece`, `n_outcomes`, `metrics_available`, `override_rate`, `escape_hatch_rate`, `near_miss_rate`, `qualifying_decisions`, `override_metrics_available`.
 
-3. **Note-creation audit hook (sql)** — append every new journal entry to a project audit table.
+3. **Note-creation review reminder** — surface newly created entries for later review. This is a notification, not a replacement for the record service's audit trail.
    ```
    rka_add_hook(
+     project_id="prj_...",
      event="post_journal_create",
-     handler_type="sql",
-     handler_config={
-       "statement": "INSERT INTO audit_log (action, entity_type, entity_id, actor, details) "
-                    "VALUES ('enrich', 'journal', ?, 'system', ?)",
-       "params": ["{entry_id}", "{type}"],
-     },
-     name="note-audit",
+     handler_type="brain_notify",
+     handler_config={"severity": "info", "content_template": {
+       "entry": "{entry_id}",
+       "type": "{type}",
+       "reminder": "Review this entry when resuming the project"
+     }},
+     name="note-review",
    )
    ```
 
@@ -587,7 +590,7 @@ rka periodic-hooks                         # all projects
 rka periodic-hooks --project-id prj_X      # single project
 ```
 
-The CLI command opens the DB, fires `periodic` once per project, exits. v1 keeps scheduling external; v1.1 may add per-hook interval config inside the dispatcher.
+The CLI command opens the DB, fires `periodic` once per project, then exits. Scheduling remains external.
 
 ### Auditing
 

@@ -22,6 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from rka.infra.embedding_backends import EmbeddingBackend, make_backend
+from rka.infra.embedding_resources import EmbeddingCallTimeout, EmbeddingResourceError
 
 if TYPE_CHECKING:
     from rka.infra.database import Database
@@ -110,10 +111,25 @@ class EmbeddingService:
     def backend(self) -> EmbeddingBackend:
         return self._backend
 
+    def validate_document(self, text: str) -> None:
+        """Preflight without inference, using the backend's prepared-input policy."""
+        validate = getattr(self._backend, "validate_input", None)
+        if validate is not None:
+            validate(text, is_query=False)
+
+    def _record_resource_error(self, exc: EmbeddingResourceError) -> None:
+        # Admission/input rejection says nothing about provider reachability.
+        self.runtime_error_code = exc.code
+        if isinstance(exc, EmbeddingCallTimeout):
+            self.runtime_available = False
+
     async def embed(self, text: str) -> list[float]:
         """Embed a query string."""
         try:
             result = await self._backend.embed(text, is_query=True)
+        except EmbeddingResourceError as exc:
+            self._record_resource_error(exc)
+            raise
         except Exception:
             self.runtime_available = False
             self.runtime_error_code = "embedding_backend_unavailable"
@@ -126,6 +142,9 @@ class EmbeddingService:
         """Embed a document for storage."""
         try:
             result = await self._backend.embed(text, is_query=False)
+        except EmbeddingResourceError as exc:
+            self._record_resource_error(exc)
+            raise
         except Exception:
             self.runtime_available = False
             self.runtime_error_code = "embedding_backend_unavailable"
@@ -140,6 +159,9 @@ class EmbeddingService:
         """Batch embed multiple texts."""
         try:
             result = await self._backend.embed_batch(texts, is_query=is_query)
+        except EmbeddingResourceError as exc:
+            self._record_resource_error(exc)
+            raise
         except Exception:
             self.runtime_available = False
             self.runtime_error_code = "embedding_backend_unavailable"
@@ -154,7 +176,9 @@ class EmbeddingService:
         if self.db is None:
             return
         from rka.services.embedding_index import assert_embedding_generation
+        from rka.services.job_execution import assert_job_write
 
+        await assert_job_write(self.db)
         await assert_embedding_generation(
             self.db,
             generation=self.index_generation,

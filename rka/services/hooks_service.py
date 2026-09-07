@@ -17,6 +17,7 @@ from rka.models.hooks import (
     HookExecution,
 )
 from rka.services.base import BaseService
+from rka.services.hook_policy import require_supported_hook_handler
 
 
 def _row_to_hook(row: dict) -> Hook:
@@ -67,6 +68,7 @@ class HooksService(BaseService):
     # ----------------------------------------------------------------- hooks
 
     async def add(self, data: HookCreate) -> Hook:
+        require_supported_hook_handler(data.handler_type)
         hook_id = generate_id("hook")
         await self.db.execute(
             """INSERT INTO hooks
@@ -115,12 +117,17 @@ class HooksService(BaseService):
         return _row_to_hook(row) if row else None
 
     async def set_enabled(self, hook_id: str, enabled: bool) -> Hook | None:
-        await self.db.execute(
-            "UPDATE hooks SET enabled = ? WHERE id = ? AND project_id = ?",
-            [1 if enabled else 0, hook_id, self.project_id],
-        )
-        await self.db.commit()
-        return await self.get(hook_id)
+        async with self.db.transaction():
+            hook = await self.get(hook_id)
+            if hook is None:
+                return None
+            if enabled:
+                require_supported_hook_handler(hook.handler_type)
+            await self.db.execute(
+                "UPDATE hooks SET enabled = ? WHERE id = ? AND project_id = ?",
+                [1 if enabled else 0, hook_id, self.project_id],
+            )
+            return await self.get(hook_id)
 
     async def delete(self, hook_id: str) -> bool:
         cursor = await self.db.execute(

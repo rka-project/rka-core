@@ -101,9 +101,9 @@ class WorkspaceScanRequest(BaseModel):
     folder_path: str
     ignore_patterns: list[str] = Field(default_factory=list)
     include_preview: bool = True
-    max_file_size_mb: float = 50.0
+    max_file_size_mb: float = Field(default=50.0, gt=0, le=500)
     use_llm: bool = True
-    max_files: int = 5000
+    max_files: int = Field(default=5000, gt=0, le=5000)
 
 
 class WorkspaceIngestRequest(BaseModel):
@@ -177,7 +177,7 @@ class HostScannedFile(BaseModel):
     extension: str
     size_bytes: int
     file_hash: str
-    content_preview: str | None = None
+    content_preview: str | None = Field(default=None, max_length=500)
     category: str  # FileCategory value
     content_hint: str = "general"  # ContentHint value
     ingestion_target: str  # IngestionTarget value
@@ -188,7 +188,7 @@ class HostScannedFile(BaseModel):
 class HostScanRequest(BaseModel):
     """Request body for POST /workspace/scan/from-host."""
     root_path: str
-    files: list[HostScannedFile]
+    files: list[HostScannedFile] = Field(max_length=2000)
     total_files_found: int
     ignore_patterns: list[str] = Field(default_factory=list)
 
@@ -198,7 +198,7 @@ class IngestFileRequest(BaseModel):
     scan_id: str
     relative_path: str
     filename: str
-    content: str
+    content: str = Field(max_length=2 * 1024 * 1024)
     content_type: str  # "text" | "bibtex" | "code" | "pdf_metadata"
     metadata: dict = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)

@@ -35,6 +35,15 @@ that Core dependency profile and does not install legacy LLM-provider SDKs.
 
 ### 1.1 Core tool surface (v3.x)
 
+**Path-reading upgrade note (Unreleased hardening):** record retrieval, pasted
+text and explicit byte uploads do not need filesystem permission. For local
+workspace scan/bootstrap or source `filepath`, the operator must first authorize
+specific input directories in the MCP process's `RKA_HOST_FILE_ROOTS`. Direct
+REST path reads use the separate `RKA_SERVER_FILE_ROOTS`. Both default to `[]`;
+installers must not auto-authorize a home directory or infer permission from
+`project_dir`. See [File access](docs/FILE_ACCESS.md) for macOS/Linux, Windows,
+container examples, limits, restart requirements and a synthetic verification.
+
 In Claude Desktop and Claude Code, you'll see **5 always-on `rka` tools** at session start:
 
 | Tool | Role | Operations behind it |
@@ -155,6 +164,23 @@ Open http://127.0.0.1:9712 in your browser to confirm the dashboard loads.
 > **What this does**: starts two containers (`rka-server` for the API + web UI, `rka-worker` for background jobs). Data is persisted in a Docker volume named `rka-data`. To stop: `docker compose down`. To stop AND wipe data: `docker compose down -v` (don't do this unless you mean it).
 
 > **First-run and upgrade indexing:** the default FastEmbed backend downloads roughly 520 MB on its first uncached use and stores it in the persistent Docker volume. An upgrade, import, or embedding-space change can also trigger a generation rebuild. The health endpoint and web UI may already be available while this work continues; semantic search temporarily falls back to lexical retrieval until the new generation is ready. Check **Settings → Embeddings** for progress before judging retrieval quality.
+
+> **Unreleased durable-backfill change:** startup, config-save, manual backfill,
+> pack-import vectors and the legacy backfill CLI
+> require the separate `rka-worker` service. An API health check alone does not
+> prove indexing is running. On macOS, Windows and Linux, use `docker compose ps`
+> and `docker compose logs --tail=50 rka-worker` to inspect it; update API and worker
+> together. Dockerless users must run `rka worker` with the same data directory and
+> database as `rka serve` (`start-all --foreground` starts only the API). Pending
+> jobs survive restart; exhausted/cancelled jobs need an explicit retry. Do not
+> delete vector tables to retry. See [backfill status, cancellation and retry](docs/embedding_backends.md#durable-backfill-lifecycle-unreleased-hardening).
+
+> A pack's 202 response includes a durable import receipt: lexical search is already
+> committed, while `semantic_state` may still be pending or disabled. An active
+> backfill with a different project/scope can cause import to return 409; that import
+> is rolled back, so retry the upload after the active task ends. The old
+> `backfill-embeddings --project ... --force` command now queues current-space work;
+> it does not change dimensions or constitute an offline recovery procedure.
 
 ### Step 1.5 — Install and verify the local MCP executable
 
@@ -754,6 +780,16 @@ Older plugin copies used `command: "python3"`, which could resolve to the Micros
 |---|---|---|
 | Hook reports `uv: command not found` | The GUI app inherited an old `PATH` | Fully quit and reopen VSCode/Claude Code after installing uv; verify `uv --version` in a new terminal |
 | Spotlight indexes integration.json and creates `._integration.json` | macOS metadata pollution on volumes without full xattr support (external drives, SMB/AFP network mounts, OneDrive/Dropbox/iCloud sync folders) | `dot_clean ~/Library/Application\ Support/RKA/` or move RKA data off the affected volume |
+| Native/Dockerless backend reports SQLite has no `load_extension` or `enable_load_extension` | The Python interpreter was built without loadable SQLite extensions; installing `sqlite-vec` alone cannot add that capability | Use the recommended Docker backend, or a separate extension-capable Python environment for both API and worker. The host stdio proxy does not need sqlite-vec. Do not alter the live database to fix an interpreter limitation. |
+
+For a new, isolated native environment, `uv venv --managed-python --python 3.13
+.venv-rka-native` selects a managed interpreter rather than reusing a system
+Python. Install the needed Core extras there and verify that interpreter can
+actually load sqlite-vec before pointing it at existing data. Python documents
+the [macOS SQLite extension-build limitation](https://docs.python.org/3.13/library/sqlite3.html#sqlite3.Connection.enable_load_extension);
+see also [uv-managed Python selection](https://docs.astral.sh/uv/concepts/python-versions/).
+This does not replace backup, coordinated API/worker upgrade, or generation
+compatibility checks.
 
 ### Linux specifically
 

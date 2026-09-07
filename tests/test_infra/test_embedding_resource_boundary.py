@@ -1,0 +1,344 @@
+"""E1a: provider-free resource-boundary regressions, using real backend adapters."""
+
+import asyncio
+import json
+import threading
+
+import httpx
+import pytest
+
+from rka.infra.embedding_backends.fastembed import FastEmbedBackend
+from rka.infra.embedding_backends.ollama import OllamaBackend
+from rka.infra.embedding_backends.openai_compat import OpenAICompatBackend
+from rka.infra.embedding_backends import make_backend
+from rka.infra.embedding_resources import (
+    EmbeddingBusy,
+    EmbeddingCallTimeout,
+    EmbeddingResourceLimits,
+)
+
+
+class Vector(list):
+    def tolist(self):
+        return list(self)
+
+
+def vector_for(text):
+    return [float(text.split(" ")[0]), 0.0]
+
+
+@pytest.fixture(params=["fastembed", "openai_compat", "ollama"])
+def captured_backend(request):
+    calls = []
+
+    class SyntheticModel:
+        def embed(self, texts, **kwargs):
+            calls.append(list(texts))
+            return [Vector(vector_for(text)) for text in texts]
+
+    def handler(request):
+        body = json.loads(request.content)
+        texts = body.get("input", [body.get("prompt")])
+        calls.append(texts)
+        if "prompt" in body:
+            return httpx.Response(200, json={"embedding": vector_for(texts[0])})
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"index": i, "embedding": vector_for(text)} for i, text in enumerate(texts)
+                ]
+            },
+        )
+
+    if request.param == "fastembed":
+        backend = FastEmbedBackend(model_name="synthetic", dim=2)
+        backend._model = SyntheticModel()
+    else:
+        cls = OpenAICompatBackend if request.param == "openai_compat" else OllamaBackend
+        backend = cls(
+            base_url="http://isolated.test",
+            model="synthetic",
+            dim=2,
+            http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        )
+    return backend, calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_query", [False, True])
+async def test_reported_long_input_never_reaches_provider(captured_backend, is_query):
+    backend, calls = captured_backend
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed("0 " + "x" * 20_500, is_query=is_query)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_connection_probe_cannot_bypass_input_policy(captured_backend):
+    backend, calls = captured_backend
+    backend.resource_limits = EmbeddingResourceLimits(max_input_bytes=1)
+    result = await backend.test_connection()
+    assert not result.ok and "embedding_input_limit" in result.detail
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_multibyte_limit_is_bytes_not_characters(captured_backend):
+    backend, calls = captured_backend
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed("0 " + "界" * 3000)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_later_input_prevents_partial_inference(captured_backend):
+    backend, calls = captured_backend
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed_batch(["0 valid", "1 " + "x" * 20_500])
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_logical_call_count_is_bounded(captured_backend):
+    backend, calls = captured_backend
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed_batch(["0 tiny"] * 129)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_batches_are_bounded_and_preserve_output_order(captured_backend):
+    backend, calls = captured_backend
+    texts = [f"{i} " + "x" * 4000 for i in range(17)]
+    assert await backend.embed_batch(texts) == [[float(i), 0.0] for i in range(17)]
+    assert [text for batch in calls for text in batch] == texts
+    for batch in calls:
+        sizes = [len(text.encode("utf-8")) for text in batch]
+        assert len(batch) <= 8
+        assert sum(sizes) <= 16_384
+        assert max(sizes) * len(batch) <= 16_384
+
+
+@pytest.mark.asyncio
+async def test_template_expansion_is_inside_the_limit():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.0]}]})
+
+    backend = OpenAICompatBackend(
+        base_url="http://isolated.test",
+        model="synthetic",
+        dim=1,
+        document_template="p" * 8000 + "{text}",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed("0 " + "x" * 1000)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_exact_byte_boundary_is_accepted(captured_backend):
+    backend, calls = captured_backend
+    text = "0 " + "x" * 8190
+    assert await backend.embed(text) == [0.0, 0.0]
+    assert calls == [[text]]
+
+
+@pytest.mark.asyncio
+async def test_total_call_bytes_are_checked_before_inference(captured_backend):
+    backend, calls = captured_backend
+    with pytest.raises(RuntimeError, match="max_call_bytes"):
+        await backend.embed_batch(["0 " + "x" * 5000] * 64)
+    assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_query", [True, False])
+async def test_nomic_prefix_counts_toward_input_budget(is_query):
+    backend = FastEmbedBackend()
+    with pytest.raises(RuntimeError, match="embedding_input_limit"):
+        await backend.embed("x" * 8192, is_query=is_query)
+    assert backend._model is None
+
+
+def test_padding_proxy_splits_even_when_total_bytes_fit():
+    limits = EmbeddingResourceLimits()
+    assert limits.plan(["x" * 8000, "y", "z"]) == [["x" * 8000, "y"], ["z"]]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"max_input_bytes": 0},
+        {"max_input_bytes": 8193},
+        {"max_input_bytes": True},
+        {"max_input_bytes": 1.5},
+        {"max_batch_bytes": 100},
+        {"max_call_inputs": 1},
+        {"call_timeout_seconds": float("inf")},
+        {"call_timeout_seconds": float("nan")},
+        {"call_timeout_seconds": 10**1000},
+        {"call_timeout_seconds": "1"},
+        {"unknown": 1},
+        [],
+        False,
+    ],
+)
+def test_resource_limits_reject_invalid_or_unbounded_configuration(bad):
+    with pytest.raises(ValueError, match="resource_limits"):
+        EmbeddingResourceLimits.from_config(bad)
+
+
+@pytest.mark.parametrize("kind", ["fastembed", "openai_compat", "ollama"])
+def test_factory_threads_limits_without_changing_space_identity(kind):
+    from rka.services.embedding_index import embedding_space_signature
+
+    config = {
+        "backend": kind,
+        "config": {"base_url": "http://isolated.test", "model": "synthetic", "dim": 2},
+    }
+    before = embedding_space_signature(config)
+    config["config"]["resource_limits"] = {"max_input_bytes": 1024}
+    assert make_backend(config).resource_limits.max_input_bytes == 1024
+    assert embedding_space_signature(config) == before
+    config["config"]["resource_limits"] = {"max_input_bytes": False}
+    with pytest.raises(ValueError, match="resource_limits"):
+        make_backend(config)
+
+
+@pytest.mark.parametrize("kind", ["openai_compat", "ollama"])
+@pytest.mark.parametrize("bad", [True, 0, -1, float("inf"), float("nan"), "invalid"])
+def test_factory_does_not_coerce_invalid_timeouts(kind, bad):
+    with pytest.raises(ValueError, match="timeout_seconds"):
+        make_backend(
+            {
+                "backend": kind,
+                "config": {
+                    "base_url": "http://isolated.test",
+                    "model": "synthetic",
+                    "timeout_seconds": bad,
+                },
+            }
+        )
+
+
+async def wait_for_thread_event(event):
+    async with asyncio.timeout(2):
+        while not event.is_set():
+            await asyncio.sleep(0.001)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interruption", ["cancel", "timeout"])
+async def test_native_slot_outlives_cancelled_or_timed_out_caller(interruption):
+    from rka.infra.embedding_resources import _NATIVE_EXECUTOR
+
+    entered, release = threading.Event(), threading.Event()
+
+    class BlockingModel:
+        def embed(self, texts, **kwargs):
+            entered.set()
+            assert release.wait(3), "test cleanup must release native inference"
+            return [Vector([0.0, 0.0]) for _ in texts]
+
+    first = FastEmbedBackend(
+        model_name="synthetic", dim=2, resource_limits={"call_timeout_seconds": 0.05}
+    )
+    first._model = BlockingModel()
+    second = FastEmbedBackend(model_name="other-synthetic", dim=2)
+    task = asyncio.create_task(first.embed("0 first"))
+    try:
+        await wait_for_thread_event(entered)
+        if interruption == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises(EmbeddingCallTimeout):
+                await task
+        with pytest.raises(EmbeddingBusy):
+            await second.embed("0 must not load another model")
+        assert second._model is None
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        # Test-only executor barrier proves the native future and its admission
+        # callback finished before another test starts. It performs no inference.
+        await asyncio.wrap_future(_NATIVE_EXECUTOR.submit(lambda: None))
+    assert await first.embed("0 after native completion") == [0.0, 0.0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", [OpenAICompatBackend, OllamaBackend])
+async def test_http_deadline_includes_retry_backoff(cls):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(503)
+
+    backend = cls(
+        base_url="http://isolated.test",
+        model="synthetic",
+        dim=2,
+        resource_limits={"call_timeout_seconds": 0.02},
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(EmbeddingCallTimeout):
+        await backend.embed("0 synthetic")
+    assert len(calls) == 1
+    await asyncio.sleep(0)  # allow cancelled transport/backoff cleanup
+
+
+@pytest.mark.asyncio
+async def test_http_slot_is_held_until_cancel_cleanup_finishes():
+    entered, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def handler(request):
+        entered.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            cleaning.set()
+            await release.wait()
+            raise
+
+    backend = OpenAICompatBackend(
+        base_url="http://isolated.test",
+        model="synthetic",
+        dim=2,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    task = asyncio.create_task(backend.embed("0 synthetic"))
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(cleaning.wait(), 1)
+        with pytest.raises(EmbeddingBusy):
+            await backend.embed("0 no overlap")
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_input_rejection_does_not_mark_provider_unavailable(captured_backend):
+    from rka.infra.embeddings import EmbeddingService
+
+    backend, calls = captured_backend
+    service = EmbeddingService(backend=backend)
+    assert await service.embed("0 healthy") == [0.0, 0.0]
+    for method in (service.embed, service.embed_document):
+        with pytest.raises(RuntimeError, match="embedding_input_limit"):
+            await method("x" * 20_500)
+        assert service.runtime_available is True
+        assert service.runtime_error_code == "embedding_input_limit"
+    assert len(calls) == 1

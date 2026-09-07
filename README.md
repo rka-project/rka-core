@@ -266,6 +266,7 @@ RKA is being developed for research workflows at UNC Charlotte. Feedback, compar
 | Document | Purpose |
 |---|---|
 | [Installation](INSTALL.md) | Complete local, MCP-client, and connector setup |
+| [File access](docs/FILE_ACCESS.md) | Operator-owned host/server input directories, safe defaults and cross-platform examples |
 | [Usage Guide](USAGE_GUIDE.md) | End-to-end Brain, Executor, PI, and research workflows |
 | [User Manual](docs/USER_MANUAL.md) | Concepts, dashboard operation, and researcher-facing reference |
 | [Architecture](docs/ARCHITECTURE.md) | Design rationale, components, data model, and knowledge lifecycle |

@@ -4,9 +4,8 @@ Exercises the wiring sites — rka_add_note triggers post_journal_create;
 rka_record_outcome triggers post_record_outcome with flattened metrics;
 rka_extract_claims triggers post_claim_extract via the fire endpoint.
 
-Scenario A is reframed via brain_notify per dec_01KPM1M58F0ARXCM0W0GZ476VD
-(scheduled-only mcp_tool); scenario B exercises drift detection via the
-flattened metrics_after payload; scenario C is deferred to v1.1.
+Scenario A uses brain_notify; scenario B exercises drift detection via the
+flattened metrics_after payload. Legacy executable handlers are blocked.
 """
 
 from __future__ import annotations
@@ -29,6 +28,7 @@ HEADERS = {"X-RKA-Project": "proj_default"}
 async def api(tmp_path: Path):
     config = RKAConfig(
         project_dir=tmp_path,
+        data_dir=tmp_path / "data",
         db_path=Path("hooks_integration.db"),
         llm_enabled=False,
         embeddings_enabled=False,
@@ -44,6 +44,19 @@ async def api(tmp_path: Path):
             yield client
     finally:
         await lifespan.__aexit__(None, None, None)
+
+
+async def _seed_legacy_sql_hook(api, *, event, statement):
+    # This is the in-process fixture's DB, never a live endpoint. New SQL
+    # registration is rejected; historical rows still need execution checks.
+    db = api._transport.app.state.db
+    await db.execute(
+        """INSERT INTO hooks
+           (id, event, project_id, handler_type, handler_config, enabled, name, created_by)
+           VALUES ('hk_legacy_sql', ?, 'proj_default', 'sql', ?, 1, 'legacy sql', 'pi')""",
+        [event, _json.dumps({"statement": statement})],
+    )
+    await db.commit()
 
 
 async def _register_brain_notify_hook(
@@ -73,7 +86,7 @@ async def _register_brain_notify_hook(
 
 # ============================================================
 # Scenario A — reframed: session_start hook nudges Brain to run maintenance.
-# (mcp_tool is scheduled-only in v1; the Brain reads the notification and
+# (mcp_tool is unsupported; the Brain reads the notification and
 # invokes rka_get_pending_maintenance itself.)
 # ============================================================
 
@@ -324,19 +337,8 @@ async def test_hook_failure_does_not_break_core_operation(api: httpx.AsyncClient
     Demonstrates the structural-additive guarantee: hooks cannot break the
     core operation they observe.
     """
-    # Register a sql hook with a deliberately broken statement.
-    await api.post(
-        "/api/hooks",
-        json={
-            "event": "post_journal_create",
-            "handler_type": "sql",
-            "handler_config": {
-                "statement": "INSERT INTO no_such_table VALUES (?)",
-                "params": ["{entry_id}"],
-            },
-            "name": "broken-sql",
-        },
-        headers=HEADERS,
+    await _seed_legacy_sql_hook(
+        api, event="post_journal_create", statement="DELETE FROM journal",
     )
     # The note creation must still succeed.
     r = await api.post(
@@ -354,7 +356,7 @@ async def test_hook_failure_does_not_break_core_operation(api: httpx.AsyncClient
         await api.get("/api/hooks/executions/list?status=error", headers=HEADERS)
     ).json()
     assert len(execs) == 1
-    assert execs[0]["error_message"] is not None
+    assert "unsupported" in execs[0]["error_message"]
 
 
 @pytest.mark.asyncio
@@ -405,18 +407,8 @@ async def test_executions_filterable_by_hook_id(api: httpx.AsyncClient):
 @pytest.mark.asyncio
 async def test_executions_filterable_by_status(api: httpx.AsyncClient):
     await _register_brain_notify_hook(api, event="periodic", template={"x": 1}, name="ok")
-    await api.post(
-        "/api/hooks",
-        json={
-            "event": "periodic",
-            "handler_type": "sql",
-            "handler_config": {
-                "statement": "INSERT INTO does_not_exist VALUES (?)",
-                "params": [1],
-            },
-            "name": "broken",
-        },
-        headers=HEADERS,
+    await _seed_legacy_sql_hook(
+        api, event="periodic", statement="INSERT INTO does_not_exist VALUES (1)",
     )
     await api.post("/api/hooks/fire", json={"event": "periodic", "payload": {}}, headers=HEADERS)
     errors = (

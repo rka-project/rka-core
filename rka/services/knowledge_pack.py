@@ -18,7 +18,6 @@ from rka.infra.ids import generate_id
 from rka.models.knowledge_pack import KnowledgePackImportResult
 from rka.models.planning import validate_planning_payload
 from rka.models.semantic_patch import SemanticPatchProposalCreate
-from rka.services.artifacts import ArtifactService
 from rka.services.base import BaseService, _now
 from rka.services.outline_integrity import validate_unit_hierarchy
 from rka.services.sources import (
@@ -1225,28 +1224,22 @@ class KnowledgePackService(BaseService):
                     ]
                     if critical:
                         raise KnowledgePackIntegrityError(critical)
+                    if any(i.get("category") == "claim_count_mismatch" for i in integrity_issues):
+                        await self._recompute_cluster_claim_counts(target_project_id)
+                    # Lexical writes and durable vector intent must not outlive
+                    # a failed graph import, or be lost after a successful one.
+                    # defer_indexing remains accepted, but never runs inference.
+                    lexical_count = await self.index_project(target_project_id)
+                    from rka.services.import_indexing import ImportIndexing
+                    indexing = await ImportIndexing(self.db).record(
+                        target_project_id, self.embeddings, lexical_count=lexical_count,
+                    )
             except BaseException:
                 if staging_project_root is not None and staging_project_root.exists():
                     shutil.rmtree(staging_project_root, ignore_errors=True)
                 if published_project_root and artifact_project_root.exists():
                     shutil.rmtree(artifact_project_root, ignore_errors=True)
                 raise
-
-        # Success path. Repair non-critical findings so the import doesn't land
-        # with stale derived counts (Brain-ratified addition during the upfront
-        # Backbrief).
-        #
-        # Index building is separated from row insertion because the two have
-        # wildly different costs: the rows land in seconds, while indexing
-        # embeds every entity one at a time and takes tens of minutes on a
-        # real pack. Run inline it exceeds any sane HTTP timeout, and the
-        # caller sees a failed request for an import that in fact succeeded
-        # and is still working. `defer_indexing` lets the route return as
-        # soon as the rows are durable and drive the rest as a job.
-        if any(i.get("category") == "claim_count_mismatch" for i in integrity_issues):
-            await self._recompute_cluster_claim_counts(target_project_id)
-        if not defer_indexing:
-            await self._sync_imported_indexes(tables, target_project_id)
 
         return KnowledgePackImportResult(
             project_id=target_project_id,
@@ -1255,7 +1248,12 @@ class KnowledgePackService(BaseService):
             imported_counts=imported_counts,
             artifact_files_restored=artifact_files_restored,
             integrity_issues=integrity_issues,
+            indexing=indexing,
         )
+
+    async def import_status(self, job_id=None):
+        from rka.services.import_indexing import ImportIndexing
+        return await ImportIndexing(self.db).status(job_id)
 
     async def _backfill_legacy_manuscripts(self, project_id: str) -> int:
         """Project legacy Writer journals into native manuscript identities.
@@ -2450,50 +2448,30 @@ class KnowledgePackService(BaseService):
         *,
         status: Any | None = None,
     ) -> int:
-        """Build FTS + vector indexes for every entity in one project.
+        """Strict, keyset-paged lexical repair. Vectors belong to the worker.
 
-        Reads the rows back from the database rather than taking the parsed
-        manifest, so it can run after `import_pack` has returned and its
-        manifest is gone — and so a re-run repairs a partial pass instead of
-        needing the original upload.
-
-        `status`, when given, is a `JobStatus` whose `processed` counter is
-        advanced per entity. Indexing a real pack takes tens of minutes; a job
-        that reports nothing until it finishes is indistinguishable from one
-        that has hung, and while it runs the project is partly searchable with
-        no signal that more is coming.
-
-        Per-entity failures are logged and skipped rather than aborting: one
-        unembeddable row should not strand the remaining thousands.
+        Import calls this inside its graph transaction, so any lexical failure
+        rolls back the import. Standalone repair serializes each fresh batch
+        with source edits. No manifest, model or unbounded fetch is required.
         """
-        indexer = BaseService(self.db, embeddings=self.embeddings, project_id=project_id)
-        artifact_indexer = ArtifactService(
-            self.db,
-            embeddings=self.embeddings,
-            project_id=project_id,
-        )
+        indexer = BaseService(self.db, project_id=project_id)
         done = 0
         for etype, (table, cols) in self._INDEXABLE.items():
-            rows = await self.db.fetchall(
-                f"SELECT {', '.join(cols)} FROM {table} WHERE project_id = ? ORDER BY id",
-                [project_id],
-            )
-            for row in rows:
-                try:
-                    await self._sync_indexable_row(
-                        indexer,
-                        artifact_indexer,
-                        etype,
-                        dict(row),
+            last_id = ""
+            while True:
+                async with self.db.transaction():
+                    rows = await self.db.fetchall(
+                        f"SELECT {', '.join(cols)} FROM {table} WHERE project_id=? AND id>? ORDER BY id LIMIT 128",
+                        [project_id, last_id],
                     )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "index_project: %s %s failed (skipped): %s",
-                        etype, row.get("id"), exc,
-                    )
-                done += 1
-                if status is not None:
-                    status.processed = done
+                    if not rows:
+                        break
+                    for row in rows:
+                        await indexer._sync_fts(etype, row["id"], dict(row), strict=True)
+                        done += 1
+                    last_id = rows[-1]["id"]
+                    if status is not None:
+                        status.processed = done
         return done
 
     async def _sync_imported_indexes(
@@ -2501,56 +2479,8 @@ class KnowledgePackService(BaseService):
         tables: dict[str, list[dict[str, Any]]],
         target_project_id: str,
     ) -> None:
-        # Import callers can override the destination independently of the
-        # service's default project. Use a dedicated scoped service so every
-        # embedding metadata lookup/write is bound to the explicit target
-        # without mutating ``self.project_id``.
-        scoped_indexer = BaseService(
-            self.db,
-            embeddings=self.embeddings,
-            project_id=target_project_id,
-        )
-        artifact_indexer = ArtifactService(
-            self.db,
-            embeddings=self.embeddings,
-            project_id=target_project_id,
-        )
-        for entity_type, (table, _columns) in self._INDEXABLE.items():
-            for row in tables.get(table, []):
-                await self._sync_indexable_row(
-                    scoped_indexer,
-                    artifact_indexer,
-                    entity_type,
-                    row,
-                )
-
-    @staticmethod
-    async def _sync_indexable_row(
-        indexer: BaseService,
-        artifact_indexer: ArtifactService,
-        entity_type: str,
-        row: dict[str, Any],
-    ) -> None:
-        """Rebuild one imported entity with its canonical indexing text."""
-
-        if entity_type == "artifact":
-            await artifact_indexer._embed_artifact(
-                artifact_id=row["id"],
-                filename=row["filename"],
-                filetype=row.get("filetype"),
-                mime=row.get("mime"),
-                metadata=row.get("metadata"),
-            )
-            return
-        if entity_type == "figure":
-            await artifact_indexer._embed_figure(
-                figure_id=row["id"],
-                caption=row.get("caption"),
-                summary=row.get("summary"),
-                claims=row.get("claims"),
-            )
-            return
-        await indexer._sync_indexes(entity_type, row["id"], row)
+        """Compatibility helper: lexical repair only, never inline inference."""
+        await self.index_project(target_project_id)
 
     @staticmethod
     def _copy_and_hash(src: BinaryIO, dst: BinaryIO) -> str:

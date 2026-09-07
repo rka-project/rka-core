@@ -84,7 +84,7 @@ class EmbeddingBackend(Protocol):
     """Protocol every embedding backend implements.
 
     Async because all three concrete backends either do I/O (HTTP) or
-    blocking work that we wrap with `asyncio.to_thread` (FastEmbed). The
+    blocking work in a bounded native executor (FastEmbed). The
     `is_query` flag lets backends that distinguish query- vs document-
     encoding (Nomic does via the `search_query:` / `search_document:`
     prefix) honor that; HTTP backends typically ignore it.

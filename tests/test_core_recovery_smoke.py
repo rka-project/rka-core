@@ -249,7 +249,8 @@ async def test_recovery_smoke_preserves_upgrade_pack_and_rollback(tmp_path: Path
         )
         artifact_path = tmp_path / "recovery-evidence.txt"
         artifact_path.write_bytes(b"portable recovery evidence")
-        await ArtifactService(database, project_id="proj_recovery_source").register(
+        from rka.infra.file_access import FileAccessPolicy
+        await ArtifactService(database, project_id="proj_recovery_source", file_policy=FileAccessPolicy([tmp_path])).register(
             filepath=str(artifact_path),
             created_by="system",
             metadata={"kind": "recovery", "ordinal": 1},

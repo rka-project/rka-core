@@ -3125,6 +3125,7 @@
             "items": {
               "$ref": "#/components/schemas/HostScannedFile"
             },
+            "maxItems": 2000,
             "type": "array"
           },
           "ignore_patterns": {
@@ -3159,6 +3160,7 @@
           "content_preview": {
             "anyOf": [
               {
+                "maxLength": 500,
                 "type": "string"
               },
               {
@@ -3292,6 +3294,7 @@
       "IngestFileRequest": {
         "properties": {
           "content": {
+            "maxLength": 2097152,
             "title": "Content",
             "type": "string"
           },
@@ -7246,10 +7249,14 @@
           },
           "max_file_size_mb": {
             "default": 50.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 500.0,
             "type": "number"
           },
           "max_files": {
             "default": 5000,
+            "exclusiveMinimum": 0.0,
+            "maximum": 5000.0,
             "type": "integer"
           },
           "use_llm": {
@@ -9960,6 +9967,44 @@
                   "type": "null"
                 }
               ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "config"
+        ]
+      }
+    },
+    "/api/config/embedding/backfill/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_backfill_api_config_embedding_backfill__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -18302,11 +18347,11 @@
   "x-rka-operation-counts": {
     "core_maturity": {
       "preview": 28,
-      "stable": 137
+      "stable": 138
     },
     "ownership": {
       "agentic-unsupported": 10,
-      "core": 165,
+      "core": 166,
       "core-legacy": 6,
       "writer-compatibility": 53
     }

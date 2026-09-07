@@ -5,7 +5,71 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
-No unreleased changes.
+### Fixed
+
+- **Core hardening / backfill entry points (unreleased)**: pack imports now commit
+  lexical indexes and durable import receipts atomically with worker-owned vector
+  intents. Import status distinguishes lexical/semantic completion. The legacy
+  embedding CLI preserves project/type/force scope but only queues against saved
+  generation-compatible configuration; it no longer runs its own vector loop.
+  Same-space force writes replace rows atomically without clearing tables. See
+  `docs/embedding_backends.md` for busy/retry and compatibility changes.
+
+- Startup/config/manual embedding backfills are durable queue intents executed
+  by the separate Core worker, with heartbeat, generation/lease-fenced writes,
+  finite retry, persistent progress, cancellation and missing-row resume after
+  process loss. Settings reloads persisted progress. Source edits during inference
+  cannot silently complete a stale embedding job. API-only installations must
+  run a worker; see [lifecycle and remaining entry-point boundaries](docs/embedding_backends.md#durable-backfill-lifecycle-unreleased-hardening).
+- Built-in embedding backends reject oversized prepared inputs (default 8 KiB)
+  without truncating source text, bound logical calls and provider batches, and
+  enforce a whole-call deadline with one active call per process. Native work
+  retains admission after caller timeout/cancellation until it actually ends.
+  Backfill isolates invalid rows and bounds error samples; legacy hash inspection
+  is paged. This is an initial resource guard, not durable backfill recovery or a
+  hard memory sandbox; see [limits and compatibility](docs/embedding_backends.md#resource-limits-unreleased-hardening).
+- BibTeX imports use the supported v2 `parse_string` entry point. Base installs
+  use a balanced-value subset parser instead of silently truncating nested
+  braces; unsupported constructs and malformed/duplicate blocks report errors
+  before any entries are created. Raw source text is retained.
+- Import origin (`added_by="import"`) is preserved while execution events use
+  `system`. Mixed batch imports no longer write an executor into a journal's
+  source field; journal creation keeps `data.source`/`verbatim_input`, with the
+  separate actor recorded in events, links and audit. Explicit invalid actors
+  remain invalid. Existing records are not rewritten; service-level journal
+  update/attribution policy is unchanged.
+- Typed BibTeX imports now forward `default_status`; MCP import output includes
+  error details. See [import behavior](docs/IMPORT_BEHAVIOR.md).
+- MCP writes retain registered-source provenance, decision tags (including
+  replacement), literature status/tags/decision links, and numeric interpretation
+  hint confidence. Typed, raw dispatch and legacy entry points are checked by
+  actual SQLite-backed REST read-back, not just outgoing payload assertions.
+- MCP updates distinguish omitted common fields from explicit default values:
+  content-only edits preserve author/confidence/importance, while an explicit
+  reset to `hypothesis` or `normal` is no longer silently ignored. Creation
+  defaults remain unchanged; nullable-field policies are not globally changed.
+
+### Security
+
+- Caller-provided file paths no longer grant filesystem access. Server-side
+  source/artifact registration, BibTeX-file import and workspace scan/ingest
+  and local bootstrap CLI require operator-owned `RKA_SERVER_FILE_ROOTS`; MCP host file operations require
+  the separate `RKA_HOST_FILE_ROOTS`. Both default to `[]` (disabled).
+  Explicit byte uploads, pasted text and existing record retrieval still work.
+  Reads reject symlink/reparse components and unsafe path forms; parsers use
+  bounded private copies. Scans stop at resource limits and report partial
+  counts. This intentionally tightens path-call compatibility; see
+  [file access configuration and limits](docs/FILE_ACCESS.md) before upgrading.
+- SPA fallback paths are confined to the resolved web root, including encoded
+  traversal and symlink targets; unsafe paths return 404 while normal client-side
+  navigation and assets remain available.
+- Lifecycle hooks only execute `brain_notify`. New SQL and scheduled-only MCP
+  hooks, and attempts to re-enable stored ones, return HTTP 422 with
+  `unsupported_hook_handler` in REST and the existing API-error tool failure in
+  MCP. Historical rows remain readable and can be disabled;
+  attempted execution records an error without running SQL or claiming a tool call
+  succeeded. This intentionally restricts legacy behavior across REST, typed MCP,
+  legacy tools and direct service calls. No schema/data migration is required.
 
 ## [3.0.0] — 2026-09-01 (RKA Core / Writer separation)
 

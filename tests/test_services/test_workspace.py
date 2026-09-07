@@ -9,6 +9,7 @@ import pytest
 import pytest_asyncio
 
 from rka.infra.database import Database
+from rka.infra.file_access import FileAccessPolicy, FileAccessError
 from rka.models.workspace import (
     ContentHint,
     FileCategory,
@@ -22,7 +23,7 @@ from rka.services.workspace import WorkspaceService
 
 
 @pytest_asyncio.fixture
-async def services(db: Database):
+async def services(db: Database, tmp_path):
     """Build the full service stack needed by WorkspaceService."""
     from rka.services.notes import NoteService
     from rka.services.literature import LiteratureService
@@ -37,6 +38,7 @@ async def services(db: Database):
         note_service=note_svc,
         literature_service=lit_svc,
         llm=None,
+        file_policy=FileAccessPolicy([tmp_path]),
     )
     return ws_svc, note_svc, lit_svc, academic_svc
 
@@ -377,13 +379,13 @@ class TestScan:
 
         manifest = await ws_svc.scan(str(ws), use_llm=False, max_files=5)
         assert len(manifest.files) == 5
-        assert manifest.total_files_found == 20
+        assert manifest.total_files_found == 5  # Stop enumeration; this is a partial count.
         assert any("File cap reached" in w for w in manifest.warnings)
 
     @pytest.mark.asyncio
     async def test_scan_not_a_directory(self, ws_svc: WorkspaceService, tmp_path: Path):
         """Scanning a non-existent path should raise ValueError."""
-        with pytest.raises(ValueError, match="Not a directory"):
+        with pytest.raises(FileAccessError, match="File access denied"):
             await ws_svc.scan(str(tmp_path / "no_such_folder"), use_llm=False)
 
 

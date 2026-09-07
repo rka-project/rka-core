@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from functools import cached_property
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -129,6 +130,18 @@ class RKAConfig(BaseSettings):
         le=500 * 1024 * 1024,
         description="Maximum bytes copied into one registered source artifact",
     )
+
+    # Operator configuration, never accepted from API payloads or manifests.
+    # JSON lists avoid ambiguous ':' drive separators on Windows.
+    server_file_roots: list[Path] = Field(
+        default_factory=list,
+        description="Authorized server-side import directories; empty disables path reads",
+    )
+
+    @cached_property
+    def file_access_policy(self):
+        from rka.infra.file_access import FileAccessPolicy
+        return FileAccessPolicy(self.server_file_roots, max_bytes=self.registered_source_max_bytes)
 
     # Embeddings are optional in the base Python distribution. Docker and a
     # future full-profile installer explicitly enable them after installing

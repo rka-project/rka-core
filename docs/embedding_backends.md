@@ -81,6 +81,138 @@ one literal `{text}` placeholder. Query-only instruction changes do not require
 document re-indexing; changes to the document template or embedding space do.
 See [ADR 0017](adr/0017-portable-embedding-runtime-boundary.md).
 
+## Resource limits (unreleased hardening)
+
+All three built-in backends validate input before loading a model or sending a
+request. Single embeddings, queries, batches and connection probes use the same
+limits. **Oversized input is rejected, not silently truncated.** Canonical source
+text is unchanged. This intentionally tightens compatibility for long documents.
+
+| `config.resource_limits` key | Default and maximum |
+|---|---:|
+| `max_input_bytes` | 8192 |
+| `max_batch_inputs` | 8 |
+| `max_batch_bytes` | 16384 |
+| `max_padding_bytes` | 16384 |
+| `max_call_inputs` | 128 |
+| `max_call_bytes` | 262144 |
+| `call_timeout_seconds` | 120 |
+
+These are UTF-8 **byte budgets, not token counts or memory limits**. Prefixes and
+templates count toward the input limit. Padding cost is conservatively represented
+by longest prepared input bytes multiplied by batch size. The complete logical
+call is validated first; accepted inputs are then split into ordered batches.
+Backfill also caps its database fetch size conservatively, allowing at most two
+maximum-sized inputs per fetch with the default budgets. Legacy hash inspection
+uses keyset pages of eight rows; it no longer loads the entire corpus at once.
+
+The optional nested object can only tighten these limits. For example, add
+`"resource_limits": {"max_input_bytes": 4096, "call_timeout_seconds": 60}` inside
+`config`. Limits must be positive, within the maxima above and consistent
+(input ≤ batch bytes ≤ call bytes, input ≤ padding bytes, batch count ≤ call count).
+Unknown resource-limit keys and booleans are rejected. These advanced settings
+are accepted in backend configuration; the web form has no dedicated controls.
+Changing admission limits alone does not change the encoding identity or discard
+compatible vectors. Same-backend web edits preserve existing advanced config;
+switching backend kinds starts a new config, so reapply any tighter limits then.
+
+Only one provider call is admitted **per process**, across backend instances.
+There is no in-memory waiting queue. HTTP logical-call deadlines include all
+requests and retries, and use the smaller of `timeout_seconds` and
+`call_timeout_seconds`. FastEmbed uses a dedicated single-thread executor; a
+cancelled or timed-out caller does not release admission until native work ends.
+
+- `embedding_input_limit`: a row is too large or a call exceeds its budget.
+  Backfill leaves that row pending, reports failure and continues with valid rows.
+  Existing durable entity jobs retain their normal finite retry/failed-state
+  behavior. Long content remains stored and available to lexical retrieval;
+  unchanged oversized input will not become embeddable merely by retrying it.
+- `embedding_resource_busy`: another inference is active; retry later. Busy or
+  input rejection does not itself mark a reachable provider unavailable.
+- `embedding_call_timeout`: the whole-call deadline expired. A timeout is not a
+  guarantee that ONNX or a remote server stopped computing.
+
+This is not a hard RSS sandbox or a cross-process inference lock. A hung native
+call can keep admission busy. Startup/config/manual backfills now use the durable
+worker lifecycle below. Chunking/truncation and offline re-indexing still need
+separate encoding and migration decisions. See the
+[E1a design](superpowers/specs/2026-09-06-embedding-resource-boundary.md).
+
+## Durable backfill lifecycle (unreleased hardening)
+
+Startup, **Save configuration**, `POST /api/config/embedding/backfill`, pack imports
+and the legacy backfill CLI queue vector work. A separate **`rka worker`** loads the saved backend configuration and
+performs these backfills. Docker Compose already starts that worker; an API-only
+or foreground installation must start it separately using the same data/config
+directory. No worker means the job remains visibly pending, not complete.
+
+Jobs, generation identity, attempt count, backoff, progress and leases live in
+SQLite. Settings reads the latest persisted job after a page refresh. A worker
+renews its lease during inference; an expired, cancelled or superseded attempt
+cannot write vectors or declare completion. A replacement worker resumes via
+the missing-row scan and does not recalculate already committed compatible rows.
+Progress counts are **per attempt** and may reset on retry. Startup does not
+create unlimited new attempts after exhaustion or explicit cancellation.
+
+The existing status URL accepts durable `job_` IDs (older volatile `bf_` IDs are
+not recoverable after upgrade). Status keeps the existing `pending`, `running`,
+`complete`, `failed` states and adds generation/attempt/lease/backoff fields.
+`POST /api/config/embedding/backfill/{job_id}/cancel` invalidates an active lease
+and stores `failed` with `error_code=embedding_backfill_cancelled`; it does not
+promise to stop an already-running native or remote inference. A new explicit
+backfill POST retries without deleting the previous job record or good vectors.
+
+Identical or narrower entity selections in the same project scope and force mode
+reuse an active job unless they request a tighter batch cap. A wider/different scope
+returns `409 embedding_backfill_busy`; wait for or cancel the active job before
+requesting the new scope. Invalid entity types return 422 before enqueueing.
+These remain installation-wide operator endpoints, not public demo permissions.
+
+Without a stored dimension, startup stays lexical and does **not** probe a model;
+use Settings **Test connection**, then save to detect and persist the dimension.
+Deploy API and worker from the same release. No new schema is introduced; the
+existing queue is already excluded from research knowledge packs.
+
+Scoped/force/hash-check jobs use a distinct version-2 task type. An E1b worker
+rejects it instead of ignoring the project scope; an upgraded worker can resume
+the same job while attempts remain. This is fail-closed protection, not support
+for mixed-version operation: upgrade API and worker together before queueing work.
+
+Pack imports commit graph rows, strict lexical indexes, a durable import receipt
+and the embedding intent atomically. A scope conflict returns 409 and rolls back
+the import, including its own staged/published files; wait for or cancel the active
+backfill before retrying the upload. There is no in-process import vector loop.
+`GET /api/projects/import/status` accepts the receipt's `job_` ID and separates
+`lexical_state`, `semantic_state`, `embedding_job_id` and `semantic_ready`.
+No backend means `semantic_state=disabled`, never semantic ready. A receipt remains
+a historical reference to its linked job; later global repairs do not rewrite it.
+Old volatile `imp_` IDs are not recovered. `defer_indexing` remains accepted by the
+Python service, but both values now build lexical indexes transactionally and queue
+vectors. `index_project` is lexical repair only; its visited count is not a vector count.
+
+`rka backfill-embeddings --project PROJECT_ID` is now enqueue-only. It requires a
+saved configuration and compatible initialized generation, does not initialize or
+reshape vector tables, and prints a job ID instead of completed counts. Existing
+artifact/figure/claim flags and project scope are preserved. The default retains
+the legacy content-hash check: the worker repairs changed as well as missing rows,
+without re-embedding unchanged compatible inputs. `--batch-size` accepts
+1–128 as a cap, further reduced by worker resource limits. `--force` re-embeds the
+selected rows in the **current space**, replacing each vector atomically, without
+clearing tables. A failed force attempt retains prior good vectors; force retries
+may revisit successful rows within the finite attempt budget. The Python
+`backfill_embeddings` compatibility helper likewise returns a queued job, not counts.
+
+A scoped job can complete while other projects still lack vectors. It does not
+declare the global generation ready; run the normal all-types backfill to fill
+remaining gaps. Scoped import status exposes this distinction through
+`semantic_ready=false` and `index_state=reindexing`.
+
+This is not the E2 offline recovery/space-change command. Full native-inference
+process isolation, real-model memory limits, shared input/hash recipes and offline
+dimension maintenance remain release gates. See the
+[E1b design](superpowers/specs/2026-09-06-durable-embedding-backfill.md) and
+[entry-point design](superpowers/specs/2026-09-07-backfill-entrypoint-unification.md).
+
 ## Switching backends
 
 1. Open the web UI → **Settings** in the sidebar → **Embeddings** card.

@@ -19,6 +19,7 @@ HEADERS = {"X-RKA-Project": "proj_default"}
 async def api_client(tmp_path: Path):
     config = RKAConfig(
         project_dir=tmp_path,
+        data_dir=tmp_path / "data",
         db_path=Path("hooks_routes.db"),
         llm_enabled=False,
         embeddings_enabled=False,
@@ -70,6 +71,19 @@ async def test_post_hook_invalid_handler_type_rejected(api_client: httpx.AsyncCl
     bad["handler_type"] = "shell"  # deferred to v1.1
     r = await api_client.post("/api/hooks", json=bad, headers=HEADERS)
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handler_type", ["sql", "mcp_tool"])
+@pytest.mark.parametrize("actor", ["pi", "system", "executor"])
+async def test_unsupported_handler_registration_has_structured_error(api_client, handler_type, actor):
+    body = _bn_hook()
+    body.update(handler_type=handler_type, created_by=actor)
+    response = await api_client.post("/api/hooks", json=body, headers=HEADERS)
+    assert response.status_code == 422
+    assert response.json()["error"] == "unsupported_hook_handler"
+    assert response.json()["handler_type"] == handler_type
+    assert (await api_client.get("/api/hooks", headers=HEADERS)).json() == []
 
 
 @pytest.mark.asyncio

@@ -2002,7 +2002,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["workspace_scan"],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS in the MCP process. Paths are denied by default; tree counts are bounded and may be partial.",
     },
     "workspace_scan": {
         "operation": "workspace_scan",
@@ -2036,7 +2036,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["workspace_tree", "bootstrap_workspace"],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS. Reads bounded host files and sends previews/metadata to the configured Core server. Request paths never grant authority.",
     },
     "list_projects": {
         "operation": "list_projects",
@@ -2741,7 +2741,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["record_literature", "batch_import"],
-        "notes": None,
+        "notes": "Preserves added_by='import' with execution actor='system'. Inspect errors even on HTTP success; malformed libraries create no entries. Base installs support a bounded BibTeX subset; macros/concatenation require the academic extra.",
     },
     "enrich_doi": {
         "operation": "enrich_doi",
@@ -3854,7 +3854,9 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "Never fetches a URL, clones a repository, calls an LLM, or writes "
             "journal/claim/decision records. MCP filepath inputs are read on the host "
             "and transferred as bounded bytes; Docker needs no host-path mount. The "
-            "result includes artifact_id for staging."
+            "result includes artifact_id for staging. Path reads require operator-configured "
+            "RKA_HOST_FILE_ROOTS on the MCP host (RKA_SERVER_FILE_ROOTS for direct REST filepath). "
+            "Both default to disabled; pasted text and explicit bytes remain available."
         ),
     },
     "admit_source_interpretation": {
@@ -4624,7 +4626,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "tool": "rka_execute",
         "category": "hooks",
         "role_tag": "PI",
-        "summary": "Add an automation hook.",
+        "summary": "Add a brain_notify lifecycle hook.",
         "signature": (
             "rka_execute(operation='hook_add', *, project_id, "
             "event, handler_type, handler_config, name, "
@@ -4641,13 +4643,13 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "enums": {},
         "examples": [
             {
-                "description": "Add a hook that fires on decision creation.",
+                "description": "Record a notification when a session starts.",
                 "call": {
                     "operation": "hook_add",
                     "project_id": "prj_01ABC...",
-                    "event": "decision.created",
-                    "handler_type": "webhook",
-                    "handler_config": {"url": "https://..."},
+                    "event": "session_start",
+                    "handler_type": "brain_notify",
+                    "handler_config": {"content_template": {"message": "Review project context"}},
                     "name": "notify-pi",
                 },
             },
@@ -4658,7 +4660,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "hook_disable",
             "hook_delete",
         ],
-        "notes": None,
+        "notes": "Only brain_notify is supported. SQL and scheduled-only MCP handlers are rejected; legacy rows remain readable and can be disabled.",
     },
     "hook_enable": {
         "operation": "hook_enable",
@@ -4789,7 +4791,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "workspace_tree",
             "bootstrap_review",
         ],
-        "notes": None,
+        "notes": "Requires operator-configured RKA_HOST_FILE_ROOTS. Sends selected host content to the configured Core server; dry_run still scans and sends previews but does not create records. A server reply cannot nominate unscanned host files.",
     },
     "scan_workspace": {
         "operation": "scan_workspace",

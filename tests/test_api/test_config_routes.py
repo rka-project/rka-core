@@ -17,7 +17,6 @@ from rka.services.embedding_backfill import (
     BackfillService,
     clear_registry,
     latest_status,
-    register_job,
 )
 from rka.services.embedding_config import EmbeddingConfig, EmbeddingConfigService
 
@@ -547,18 +546,20 @@ async def test_backfill_status_returns_404_for_unknown_job_id(api_client):
 
 @pytest.mark.asyncio
 async def test_backfill_status_returns_snapshot_for_known_job(api_client):
-    # Register a job directly via the service registry; verify GET reads it.
-    from rka.services.embedding_backfill import register_job
+    from rka.services.jobs import JobQueue
 
     client, _ = api_client
-    status_obj = register_job()
+    job_id = await JobQueue(client._transport.app.state.db).enqueue(
+        "embedding_backfill", payload={"generation": 1},
+    )
+    clear_registry()
     r = await client.get(
         "/api/config/embedding/backfill/status",
-        params={"job_id": status_obj.job_id},
+        params={"job_id": job_id},
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["job_id"] == status_obj.job_id
+    assert body["job_id"] == job_id
     assert body["state"] == "pending"
     assert body["processed"] == 0
     assert body["total"] == 0
@@ -792,7 +793,10 @@ async def test_manual_backfill_resumes_failed_bound_generation(api_client):
     assert response.status_code == 202
     state = await get_embedding_index_state(db)
     assert state is not None
-    assert state.status == "ready"
+    assert state.status == "reindexing"  # API only requests work
+    from rka.services.worker import EnrichmentWorker
+    assert await EnrichmentWorker(db=db, embeddings=stub).run_once()
+    assert (await get_embedding_index_state(db)).status == "ready"
 
 
 @pytest.mark.asyncio
@@ -848,11 +852,12 @@ async def test_manual_backfill_rejects_stale_process_generation(api_client):
 
 
 @pytest.mark.asyncio
-async def test_consistency_gate_failure_updates_backfill_job_status(api_client):
+async def test_consistency_gate_failure_updates_backfill_job_status(api_client, monkeypatch):
     client, _ = api_client
     app = client._transport.app
     db = app.state.db
-    from rka.api.routes.config import _run_backfill_safely
+    from rka.services.embedding_jobs import EmbeddingJobs
+    from rka.services.worker import EnrichmentWorker
     from rka.services.embedding_index import (
         embedding_space_signature,
         get_embedding_index_state,
@@ -901,24 +906,27 @@ async def test_consistency_gate_failure_updates_backfill_job_status(api_client):
             status.state = "complete"
             return status
 
-    status = register_job()
-    service = _InconsistentBackfill(db=db, embeddings=_Stub())
-
-    await _run_backfill_safely(service, status)
+    job = await EmbeddingJobs(db).request(_Stub())
+    await db.execute("UPDATE jobs SET max_attempts=1 WHERE id=?", [job["id"]])
+    await db.commit()
+    monkeypatch.setattr("rka.services.embedding_jobs.BackfillService", _InconsistentBackfill)
+    assert await EnrichmentWorker(db=db, embeddings=_Stub()).run_once()
+    status = await EmbeddingJobs(db).status(job["id"])
 
     state = await get_embedding_index_state(db)
     assert state is not None
     assert state.status == "failed"
-    assert status.state == "failed"
-    assert "inconsistent" in (status.error or "")
+    assert status["state"] == "failed"
+    assert "consistency" in (status["error"] or "")
 
 
 @pytest.mark.asyncio
-async def test_overlapping_backfills_recover_after_first_run_fails(api_client):
+async def test_overlapping_backfills_recover_after_first_run_fails(api_client, monkeypatch):
     """A queued healthy run must own and recover the same generation."""
     client, _ = api_client
     db = client._transport.app.state.db
-    from rka.api.routes.config import _run_backfill_safely
+    from rka.services.embedding_jobs import EmbeddingJobs
+    from rka.services.worker import EnrichmentWorker
     from rka.services.embedding_index import (
         embedding_space_signature,
         get_embedding_index_state,
@@ -960,23 +968,30 @@ async def test_overlapping_backfills_recover_after_first_run_fails(api_client):
             status.state = "complete"
             return status
 
-    failed_status = register_job()
-    healthy_status = register_job()
-    failing = _FailingBackfill(db=db, embeddings=_Stub())
-    healthy = _HealthyBackfill(db=db, embeddings=_Stub())
-
-    first_task = asyncio.create_task(_run_backfill_safely(failing, failed_status))
-    await asyncio.wait_for(first_started.wait(), timeout=2)
-    second_task = asyncio.create_task(_run_backfill_safely(healthy, healthy_status))
-    await asyncio.sleep(0)
-    assert second_started.is_set() is False
-
-    release_first.set()
-    await asyncio.gather(first_task, second_task)
+    scheduler = EmbeddingJobs(db)
+    job = await scheduler.request(_Stub())
+    monkeypatch.setattr("rka.services.embedding_jobs.BackfillService", _FailingBackfill)
+    first = EnrichmentWorker(db=db, embeddings=_Stub(), worker_id="first")
+    second = EnrichmentWorker(db=db, embeddings=_Stub(), worker_id="second")
+    first_task = asyncio.create_task(first.run_once())
+    try:
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+        assert (await scheduler.request(_Stub()))["id"] == job["id"]
+        assert not await second.run_once()
+        assert not second_started.is_set()
+    finally:
+        release_first.set()
+        await first_task
+    pending = await scheduler.status(job["id"])
+    assert pending["state"] == "pending" and pending["attempts"] == 1
+    await db.execute("UPDATE jobs SET run_after='2000-01-01T00:00:00Z' WHERE id=?", [job["id"]])
+    await db.commit()
+    monkeypatch.setattr("rka.services.embedding_jobs.BackfillService", _HealthyBackfill)
+    assert await second.run_once()
 
     state = await get_embedding_index_state(db)
-    assert failed_status.state == "failed"
-    assert healthy_status.state == "complete"
+    assert (await scheduler.status(job["id"]))["state"] == "complete"
+    assert (await scheduler.status(job["id"]))["attempts"] == 2
     assert second_started.is_set() is True
     assert state is not None
     assert state.generation == generation.state.generation

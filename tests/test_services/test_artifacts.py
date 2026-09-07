@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from rka.services.artifacts import ArtifactService, build_artifact_text
+from rka.infra.file_access import FileAccessPolicy
 
 
 def test_artifact_embedding_text_canonicalizes_stored_json_metadata() -> None:
@@ -23,7 +24,7 @@ async def test_register_rejects_invalid_actor_without_partial_write(db, tmp_path
     path = tmp_path / "artifact.txt"
     path.write_text("artifact", encoding="utf-8")
 
-    svc = ArtifactService(db)
+    svc = ArtifactService(db, file_policy=FileAccessPolicy([tmp_path]))
 
     with pytest.raises(ValueError, match="Invalid actor 'smoke'"):
         await svc.register(filepath=str(path), filename="artifact.txt", created_by="smoke")
@@ -40,7 +41,7 @@ async def test_register_audit_failure_rolls_back_artifact(
 ):
     path = tmp_path / "atomic-artifact.txt"
     path.write_text("atomic artifact registration", encoding="utf-8")
-    svc = ArtifactService(db)
+    svc = ArtifactService(db, file_policy=FileAccessPolicy([tmp_path]))
 
     async def fail_audit(*args, **kwargs) -> None:
         raise RuntimeError("simulated artifact audit failure")
@@ -62,7 +63,7 @@ async def test_register_embeds_after_database_transaction(
 ):
     path = tmp_path / "embedded-artifact.txt"
     path.write_text("embed after commit", encoding="utf-8")
-    svc = ArtifactService(db)
+    svc = ArtifactService(db, file_policy=FileAccessPolicy([tmp_path]))
     transaction_states: list[tuple[object | None, bool]] = []
 
     async def observe_embedding(**kwargs) -> None:

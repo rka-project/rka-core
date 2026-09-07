@@ -71,3 +71,16 @@ Unreviewed source material is portable and auditable without gaining canonical
 status. Admission is intentionally a short, human-in-the-loop chain rather than
 an ingestion pipeline: register, stage an interpretation, review it, create or
 select a canonical target, then admit it.
+
+## 2026-09-05 hardening addendum: path authority
+
+The host-read/bounded-bytes design is retained. A caller-supplied path does not
+itself authorize the read: MCP host paths require operator-owned
+`RKA_HOST_FILE_ROOTS`; direct REST paths require the separate
+`RKA_SERVER_FILE_ROOTS`. Both default to empty, and neither a project directory,
+request field nor a server-returned manifest can expand them. Managed artifact
+bytes and explicit uploads retain their existing ownership boundary.
+
+See [File access](../FILE_ACCESS.md) for the snapshot-based read design,
+compatibility action, cross-platform restrictions and remaining threat limits.
+This addendum does not change source admission or historical source records.

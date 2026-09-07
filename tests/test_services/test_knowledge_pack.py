@@ -12,6 +12,7 @@ import pytest
 
 from rka import __version__
 from rka.infra.database import Database
+from rka.infra.file_access import FileAccessPolicy
 from rka.infra.embeddings import EmbeddingService
 from rka.models.claim import ClaimCreate, ClaimScopeCondition, ClaimScopeWrite
 from rka.models.decision import DecisionCreate, DecisionOption
@@ -48,6 +49,19 @@ class DeterministicEmbeddings(EmbeddingService):
 
     async def embed_document(self, text: str) -> list[float]:
         return self._vector(text)
+
+    async def embed_batch(self, texts, **kwargs):
+        return [self._vector(text) for text in texts]
+
+
+async def _bind_embedding_generation(db, embeddings):
+    from rka.services.embedding_index import reconcile_embedding_index
+
+    state = (await reconcile_embedding_index(
+        db, space_signature=embeddings.space_signature,
+        model_name=embeddings.model_name, dim=embeddings.dim,
+    )).state
+    embeddings.bind_index_generation(state.generation, space_signature=state.space_signature)
 
 
 async def _make_db(path: Path) -> Database:
@@ -357,7 +371,7 @@ async def test_knowledge_pack_round_trip_imports_into_same_db_with_remapped_ids_
         note_svc = NoteService(db, project_id="proj_export")
         decision_svc = DecisionService(db, project_id="proj_export")
         literature_svc = LiteratureService(db, project_id="proj_export")
-        artifact_svc = ArtifactService(db, project_id="proj_export")
+        artifact_svc = ArtifactService(db, project_id="proj_export", file_policy=FileAccessPolicy([tmp_path]))
 
         decision = await decision_svc.create(
             DecisionCreate(
@@ -697,6 +711,7 @@ async def test_knowledge_pack_export_rejects_stale_artifact_file(
         artifact = await ArtifactService(
             db,
             project_id="proj_stale_artifact",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(
             filepath=str(artifact_path),
             created_by="system",
@@ -730,6 +745,7 @@ async def test_knowledge_pack_export_rejects_missing_artifact_file(
         artifact = await ArtifactService(
             db,
             project_id="proj_missing_export",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(filepath=str(artifact_path), created_by="system")
         artifact_path.unlink()
 
@@ -762,6 +778,7 @@ async def test_knowledge_pack_import_rejects_corrupted_bundled_artifact(
         artifact = await ArtifactService(
             db,
             project_id="proj_artifact_source",
+            file_policy=FileAccessPolicy([tmp_path]),
         ).register(
             filepath=str(artifact_path),
             created_by="system",
@@ -1105,29 +1122,9 @@ async def test_import_embedding_sync_uses_explicit_target_project_scope(
         },
     )
 
-    class RecordingEmbeddings:
-        def __init__(self) -> None:
-            self.calls: list[dict] = []
-
-        async def embed_and_store(
-            self,
-            entity_type: str,
-            entity_id: str,
-            text: str,
-            *,
-            project_id: str,
-        ) -> None:
-            self.calls.append(
-                {
-                    "entity_type": entity_type,
-                    "entity_id": entity_id,
-                    "text": text,
-                    "project_id": project_id,
-                }
-            )
-
     db = await _make_db(tmp_path / "embedding-scope.db")
-    embeddings = RecordingEmbeddings()
+    embeddings = DeterministicEmbeddings(db)
+    await _bind_embedding_generation(db, embeddings)
     service = KnowledgePackService(
         db,
         embeddings=embeddings,
@@ -1135,22 +1132,24 @@ async def test_import_embedding_sync_uses_explicit_target_project_scope(
     )
     try:
         with pack_path.open("rb") as pack_file:
-            await service.import_pack(
+            result = await service.import_pack(
                 pack_file,
                 project_id="proj_embedding_target",
                 project_name="Embedding Target",
             )
 
         assert service.project_id == "proj_unrelated_service_default"
-        assert len(embeddings.calls) == 1
-        assert embeddings.calls[0]["entity_type"] == "journal"
-        assert embeddings.calls[0]["project_id"] == "proj_embedding_target"
+        from rka.services.worker import EnrichmentWorker
+        assert not await db.fetchone("SELECT entity_id FROM embedding_metadata")
+        assert await EnrichmentWorker(db=db, embeddings=embeddings).run_once()
+        assert (await service.import_status(result.indexing["job_id"]))["state"] == "complete"
         imported = await db.fetchone(
             "SELECT id FROM journal WHERE project_id = ?",
             ["proj_embedding_target"],
         )
         assert imported is not None
-        assert embeddings.calls[0]["entity_id"] == imported["id"]
+        metadata = await db.fetchall("SELECT entity_type, entity_id, project_id FROM embedding_metadata")
+        assert metadata == [{"entity_type": "journal", "entity_id": imported["id"], "project_id": "proj_embedding_target"}]
     finally:
         await db.close()
 
@@ -1169,7 +1168,7 @@ async def test_pack_import_rebuilds_searchable_artifact_and_figure_vectors(
             ProjectCreate(id="proj_media_source", name="Media Source"),
             actor="system",
         )
-        source_artifacts = ArtifactService(db, project_id="proj_media_source")
+        source_artifacts = ArtifactService(db, project_id="proj_media_source", file_policy=FileAccessPolicy([tmp_path]))
         artifact = await source_artifacts.register(
             filepath=str(artifact_path),
             created_by="system",
@@ -1184,9 +1183,14 @@ async def test_pack_import_rebuilds_searchable_artifact_and_figure_vectors(
             claims=[{"claim": "Tuning reduces packet loss", "confidence": 0.9}],
         )
         embeddings = DeterministicEmbeddings(db)
+        await _bind_embedding_generation(db, embeddings)
         background_indexer = KnowledgePackService(db, embeddings=embeddings)
         assert await background_indexer.count_indexable("proj_media_source") == 2
         assert await background_indexer.index_project("proj_media_source") == 2
+        from rka.services.embedding_jobs import EmbeddingJobs
+        from rka.services.worker import EnrichmentWorker
+        await EmbeddingJobs(db).request(embeddings, project_id="proj_media_source")
+        assert await EnrichmentWorker(db=db, embeddings=embeddings).run_once()
         pack_path, _ = await KnowledgePackService(
             db,
             project_id="proj_media_source",
@@ -1201,12 +1205,12 @@ async def test_pack_import_rebuilds_searchable_artifact_and_figure_vectors(
                 defer_indexing=defer_indexing,
             )
 
-        if defer_indexing:
-            assert await db.fetchall(
-                "SELECT id FROM vec_artifacts WHERE project_id = ?",
-                ["proj_media_target"],
-            ) == []
-            assert await importer.index_project("proj_media_target") == 2
+        # Both compatibility values leave vectors to the durable worker.
+        assert await db.fetchall(
+            "SELECT id FROM vec_artifacts WHERE project_id = ?", ["proj_media_target"],
+        ) == []
+        assert await importer.index_project("proj_media_target") == 2
+        assert await EnrichmentWorker(db=db, embeddings=embeddings).run_once()
 
         imported_artifact = await db.fetchone(
             "SELECT id FROM artifacts WHERE project_id = ?",

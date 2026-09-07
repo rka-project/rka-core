@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from rka.infra.ids import generate_id
+from rka.infra.file_access import FileAccessPolicy, FileAccessError
 from rka.models.interpretation import (
     InterpretationCandidateCreate,
     InterpretationTriage,
@@ -221,15 +222,16 @@ async def test_file_registration_rejects_unsafe_or_unverified_inputs(db, tmp_pat
         project_id=PROJECT,
         storage_root=tmp_path / "packs",
         max_bytes=4,
+        file_policy=FileAccessPolicy([tmp_path]),
     )
 
-    with pytest.raises(SourceRegistrationError, match="symlink"):
+    with pytest.raises(FileAccessError, match="symlink"):
         await service.register(
             RegisterSourceRequest(
                 source_kind="file", filepath=str(symlink), registered_by="pi"
             )
         )
-    with pytest.raises(SourceRegistrationError, match="maximum size"):
+    with pytest.raises(FileAccessError, match="maximum size"):
         await service.register(
             RegisterSourceRequest(
                 source_kind="file", filepath=str(payload), registered_by="pi"
@@ -254,7 +256,7 @@ async def test_file_registration_rejects_unsafe_or_unverified_inputs(db, tmp_pat
             )
         )
 
-    hash_service = SourceService(db, project_id=PROJECT, storage_root=tmp_path / "packs2")
+    hash_service = SourceService(db, project_id=PROJECT, storage_root=tmp_path / "packs2", file_policy=FileAccessPolicy([tmp_path]))
     with pytest.raises(SourceRegistrationError, match="expected_content_hash"):
         await hash_service.register(
             RegisterSourceRequest(

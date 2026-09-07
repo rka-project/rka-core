@@ -93,7 +93,7 @@ class TestTheImportReturnsEarly:
     @pytest.mark.asyncio
     async def test_it_names_a_job_to_poll(self, client):
         body = (await _import(client)).json()
-        assert body["indexing"]["job_id"].startswith("imp_")
+        assert body["indexing"]["job_id"].startswith("job_")
         assert body["indexing"]["job_id"] in body["indexing"]["status_url"]
 
     @pytest.mark.asyncio
@@ -153,7 +153,6 @@ class TestIndexingIsRerunnable:
     @pytest.mark.asyncio
     async def test_index_project_reads_rows_back_from_the_database(self, client, tmp_path):
         """It must not need the manifest, which is gone once import returns."""
-        from rka.api.deps import get_db
         from rka.services.knowledge_pack import KnowledgePackService
 
         body = (await _import(client)).json()
