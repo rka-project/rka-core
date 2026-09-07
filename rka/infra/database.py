@@ -662,24 +662,37 @@ class Database:
             self._transaction_owner = task
             self._transaction_depth = 1
             try:
-                if migration_lock:
-                    await self._begin_migration_transaction(conn)
-                else:
-                    await conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                 try:
+                    if migration_lock:
+                        await self._begin_migration_transaction(conn)
+                    else:
+                        await conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
                     yield self
                 except BaseException:
-                    await conn.rollback()
+                    await self._rollback_before_unlock(conn)
                     raise
                 else:
                     try:
                         await conn.commit()
                     except BaseException:
-                        await conn.rollback()
+                        await self._rollback_before_unlock(conn)
                         raise
             finally:
                 self._transaction_depth = 0
                 self._transaction_owner = None
+
+    @staticmethod
+    async def _rollback_before_unlock(conn) -> None:
+        # Cancelling aiosqlite's awaiter does not remove an already queued BEGIN
+        # from its thread. Queue rollback after it and retain connection ownership
+        # until cleanup completes, including under repeated cancellation.
+        cleanup = asyncio.create_task(conn.rollback())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
 
     @asynccontextmanager
     async def _nested_transaction(self) -> AsyncIterator[None]:

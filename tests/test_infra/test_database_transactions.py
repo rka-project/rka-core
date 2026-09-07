@@ -19,6 +19,70 @@ async def _create_items_table(db: Database) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("migration_lock", [False, True])
+async def test_cancellation_during_begin_rolls_back_before_unlock(db, monkeypatch, migration_lock):
+    original = db.conn.execute
+    begun = asyncio.Event()
+
+    async def paused_begin(sql, *args, **kw):
+        cursor = await original(sql, *args, **kw)
+        if sql.startswith("BEGIN"):
+            begun.set()
+            await asyncio.Event().wait()
+        return cursor
+
+    monkeypatch.setattr(db.conn, "execute", paused_begin)
+
+    async def work():
+        async with db.transaction(migration_lock=migration_lock):
+            raise AssertionError("cancelled BEGIN must not enter the transaction body")
+
+    task = asyncio.create_task(work())
+    await asyncio.wait_for(begun.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not db.conn.in_transaction
+    assert db._transaction_owner is None
+    monkeypatch.setattr(db.conn, "execute", original)
+    async with db.transaction():
+        assert await db.fetchone("SELECT 1 AS healthy") == {"healthy": 1}
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancellation_does_not_release_connection_before_rollback(db, monkeypatch):
+    original = db.conn.rollback
+    body, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def paused_rollback():
+        cleaning.set()
+        await release.wait()
+        await original()
+
+    monkeypatch.setattr(db.conn, "rollback", paused_rollback)
+
+    async def work():
+        async with db.transaction():
+            body.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(work())
+    try:
+        await asyncio.wait_for(body.wait(), 2)
+        task.cancel()
+        await asyncio.wait_for(cleaning.wait(), 2)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert db._transaction_owner is task
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert not db.conn.in_transaction and db._transaction_owner is None
+
+
+@pytest.mark.asyncio
 async def test_outer_transaction_commits(db: Database) -> None:
     await _create_items_table(db)
 
