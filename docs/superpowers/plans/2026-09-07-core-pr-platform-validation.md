@@ -24,6 +24,15 @@ load preflight must pass; no skipped vector gate or extension mock is added.
 The vector environment explicitly excludes FastEmbed and bibtexparser. The
 uv version is pinned; its interpreter/cache/venv are runner-temporary.
 
+The second run exposed a launcher trap in that correction: `python -m uv`
+sets `UV_INTERNAL__PARENT_INTERPRETER` and selected the setup-python parent
+despite `--managed-python`. The actual uv 0.12.10 launcher source and runner
+log both confirmed this. Invoke the installed uv executable directly, resolve
+it with `uv.find_uv_bin`, and assert the new interpreter's extension methods
+before installing test dependencies. A fully temporary local download of
+managed CPython 3.13.15 and 3.11.16 then passed the capability check and real sqlite-vec
+0.1.6 load. No system Python, live RKA environment or model cache was changed.
+
 The BOM regression now supplies explicit bytes and checks both LF and CRLF,
 through text and file paths and both parser variants. The raw-source equality
 assertion remains exact. Installation guidance describes the native macOS
@@ -39,8 +48,11 @@ interpreter limitation without changing the recommended Docker deployment.
   4.15 seconds. Ruff and `git diff --check` passed; parsed workflow retains four
   jobs and all six native matrix entries. Real sqlite-vec preflight passed in
   the isolated base environment, reporting v0.1.6.
-- Remote rerun results must be checked before merge. The earlier full Core result remains 3536 passed at
-  `f3679b1`; it is not evidence that the corrected remote head has passed.
+- Corrected full local Core: **3540 passed, 1 skipped, 294 deselected, 5 subtests
+  passed**, 265.55 seconds. Base model-free/import/backfill/ownership combination:
+  **254 passed, 9 skipped** (optional academic dependency absent), 32.05 seconds.
+- Remote rerun results must be checked before merge. Local results do not
+  substitute for the corrected native CI head.
 
 The source merge is separate from release publication and deployment. E2 and
 the remaining audit/upgrade gates remain open; this does not close #158.

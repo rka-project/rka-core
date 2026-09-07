@@ -140,7 +140,10 @@ jobs:
           UV_CACHE_DIR: ${{ runner.temp }}/rka-ci-uv-cache
         run: |
           python -m pip install "uv==0.12.10"
-          python -m uv venv --managed-python --python "$RKA_TEST_PYTHON" --seed "$RUNNER_TEMP/rka-vector-venv"
+          # Do not use `python -m uv`: that launcher pins its parent interpreter.
+          RKA_UV_BIN="$(python -c 'from uv import find_uv_bin; print(find_uv_bin())')"
+          "$RKA_UV_BIN" venv --managed-python --python "$RKA_TEST_PYTHON" --seed "$RUNNER_TEMP/rka-vector-venv"
+          "$RUNNER_TEMP/rka-vector-venv/bin/python" -c "import sys, sqlite3; print(sys.executable, sys.version); assert hasattr(sqlite3.Connection, 'enable_load_extension'); assert hasattr(sqlite3.Connection, 'load_extension')"
           "$RUNNER_TEMP/rka-vector-venv/bin/python" -m pip install ".[dev,workspace]"
           echo "$RUNNER_TEMP/rka-vector-venv/bin" >> "$GITHUB_PATH"
 
