@@ -49,11 +49,15 @@ async def test_bibtex_preserves_nested_fields_raw_source_and_import_origin(impor
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via_file", [False, True])
-async def test_utf8_bom_does_not_hide_the_first_entry(importer, tmp_path, via_file):
-    text = "\ufeff" + BIBTEX
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+async def test_utf8_bom_does_not_hide_the_first_entry(importer, tmp_path, via_file, newline):
+    raw_entry = BIBTEX.replace("\n", newline)
+    text = "\ufeff" + raw_entry
     if via_file:
         path = tmp_path / "bom-refs.bib"
-        path.write_text(text, encoding="utf-8")
+        # Preserve exact fixture bytes on every OS. Text-mode writes otherwise
+        # translate LF on Windows, invalidating the raw-source comparison.
+        path.write_bytes(text.encode("utf-8"))
         result = await importer.import_bibtex_file(str(path))
     else:
         result = await importer.import_bibtex(text)
@@ -61,7 +65,7 @@ async def test_utf8_bom_does_not_hide_the_first_entry(importer, tmp_path, via_fi
     assert len(result["imported"]) == result["total_parsed"] == 1, result
     stored = await importer.lit.get(result["imported"][0]["id"])
     assert stored.title == "A Nested AI Title"
-    assert stored.bibtex == BIBTEX
+    assert stored.bibtex == raw_entry
 
 
 @pytest.mark.asyncio

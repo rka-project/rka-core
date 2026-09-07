@@ -780,6 +780,16 @@ Older plugin copies used `command: "python3"`, which could resolve to the Micros
 |---|---|---|
 | Hook reports `uv: command not found` | The GUI app inherited an old `PATH` | Fully quit and reopen VSCode/Claude Code after installing uv; verify `uv --version` in a new terminal |
 | Spotlight indexes integration.json and creates `._integration.json` | macOS metadata pollution on volumes without full xattr support (external drives, SMB/AFP network mounts, OneDrive/Dropbox/iCloud sync folders) | `dot_clean ~/Library/Application\ Support/RKA/` or move RKA data off the affected volume |
+| Native/Dockerless backend reports SQLite has no `load_extension` or `enable_load_extension` | The Python interpreter was built without loadable SQLite extensions; installing `sqlite-vec` alone cannot add that capability | Use the recommended Docker backend, or a separate extension-capable Python environment for both API and worker. The host stdio proxy does not need sqlite-vec. Do not alter the live database to fix an interpreter limitation. |
+
+For a new, isolated native environment, `uv venv --managed-python --python 3.13
+.venv-rka-native` selects a managed interpreter rather than reusing a system
+Python. Install the needed Core extras there and verify that interpreter can
+actually load sqlite-vec before pointing it at existing data. Python documents
+the [macOS SQLite extension-build limitation](https://docs.python.org/3.13/library/sqlite3.html#sqlite3.Connection.enable_load_extension);
+see also [uv-managed Python selection](https://docs.astral.sh/uv/concepts/python-versions/).
+This does not replace backup, coordinated API/worker upgrade, or generation
+compatibility checks.
 
 ### Linux specifically
 

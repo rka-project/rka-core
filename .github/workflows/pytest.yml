@@ -129,6 +129,21 @@ jobs:
           python -c "import importlib.util; assert importlib.util.find_spec('bibtexparser') is None"
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_bibtex_parser.py tests/test_services/test_bibtex_import.py tests/test_services/test_journal_write_path.py tests/test_mcp/test_import_roundtrip.py tests/test_mcp/test_write_field_roundtrip.py
 
+      # setup-python's macOS Python lacks SQLite load_extension. Keep its base
+      # wheel/import coverage above, then use a separate extension-capable
+      # interpreter for real vector tests; never skip or mock sqlite-vec here.
+      - name: Prepare extension-capable Python for macOS vector tests
+        if: runner.os == 'macOS'
+        env:
+          RKA_TEST_PYTHON: ${{ matrix.python-version }}
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/rka-ci-python
+          UV_CACHE_DIR: ${{ runner.temp }}/rka-ci-uv-cache
+        run: |
+          python -m pip install "uv==0.12.10"
+          python -m uv venv --managed-python --python "$RKA_TEST_PYTHON" --seed "$RUNNER_TEMP/rka-vector-venv"
+          "$RUNNER_TEMP/rka-vector-venv/bin/python" -m pip install ".[dev,workspace]"
+          echo "$RUNNER_TEMP/rka-vector-venv/bin" >> "$GITHUB_PATH"
+
       - name: Verify embedding admission without model downloads
         env:
           RKA_DATA_DIR: ${{ runner.temp }}/rka-embedding-resource-data
@@ -137,8 +152,10 @@ jobs:
           RKA_API_URL: http://127.0.0.1:1
           HF_HUB_OFFLINE: "1"
         run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('fastembed') is None; assert importlib.util.find_spec('bibtexparser') is None"
           python -m pytest -q --tb=short --strict-markers tests/test_infra/test_embedding_resource_boundary.py tests/test_services/test_embedding_backends.py
           python -m pip install "sqlite-vec==0.1.6"
+          python -c "import sqlite3, sqlite_vec; db = sqlite3.connect(':memory:'); db.enable_load_extension(True); sqlite_vec.load(db); db.enable_load_extension(False); print('Native sqlite-vec:', db.execute('SELECT vec_version()').fetchone()[0]); db.close()"
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_embedding_resource_backfill.py tests/test_services/test_embedding_backfill.py
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_durable_embedding_backfill.py tests/test_api/test_durable_embedding_jobs.py tests/test_infra/test_database_transactions.py
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_backfill_entrypoints.py tests/test_cli/test_backfill_durable.py tests/test_api/test_import_durable.py tests/test_api/test_import_progress.py
