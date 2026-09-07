@@ -9995,6 +9995,44 @@
         ]
       }
     },
+    "/api/config/embedding/backfill/{job_id}/cancel": {
+      "post": {
+        "operationId": "cancel_backfill_api_config_embedding_backfill__job_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "config"
+        ]
+      }
+    },
     "/api/config/embedding/test": {
       "post": {
         "operationId": "test_embedding_config_api_config_embedding_test_post",
@@ -18309,11 +18347,11 @@
   "x-rka-operation-counts": {
     "core_maturity": {
       "preview": 28,
-      "stable": 137
+      "stable": 138
     },
     "ownership": {
       "agentic-unsupported": 10,
-      "core": 165,
+      "core": 166,
       "core-legacy": 6,
       "writer-compatibility": 53
     }

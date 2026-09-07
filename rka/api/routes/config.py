@@ -30,13 +30,7 @@ from fastapi.responses import JSONResponse
 from rka.config import RKAConfig
 from rka.infra.embedding_backends import EmbeddingConfigError
 from rka.infra.embeddings import EmbeddingService
-from rka.services.embedding_backfill import (
-    BackfillService,
-    JobStatus,
-    get_status,
-    latest_status,
-    register_job,
-)
+from rka.services.embedding_jobs import EmbeddingJobs, BackfillScopeBusy, validate_types
 from rka.services.embedding_config import (
     EmbeddingConfig,
     EmbeddingConfigService,
@@ -46,11 +40,8 @@ from rka.services.embedding_index import (
     EmbeddingGenerationMismatch,
     assert_online_dimension_compatible,
     embedding_space_signature,
-    finish_embedding_transition,
-    get_embedding_index_state,
     legacy_index_adoption_safe,
     reconcile_embedding_index,
-    resume_embedding_transition,
 )
 
 logger = logging.getLogger(__name__)
@@ -59,7 +50,6 @@ router = APIRouter()
 
 REDACTED_API_KEY = "***"
 _CONFIG_UPDATE_LOCK = asyncio.Lock()
-_BACKFILL_LOCK = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +297,7 @@ async def _put_embedding_config_locked(
     # between it and the sqlite-vec transition. Saving last also means a file
     # error rolls the DB transition back.
     config_saved = False
+    queued_job = None
     try:
         async with db.transaction(migration_lock=True):
             await assert_online_dimension_compatible(db, dim=target_dim)
@@ -317,6 +308,12 @@ async def _put_embedding_config_locked(
                 dim=target_dim,
                 allow_legacy_adoption=legacy_index_adoption_safe(body),
             )
+            new_embeddings.bind_index_generation(
+                reconciliation.state.generation, space_signature=reconciliation.state.space_signature,
+            )
+            needs_backfill = needs_backfill or reconciliation.transitioned or reconciliation.resumed
+            if needs_backfill:
+                queued_job = await EmbeddingJobs(db).request(new_embeddings)
             saved = svc.save_config(body, actor=actor)
             config_saved = True
     except EmbeddingDimensionTransitionRequired as exc:
@@ -330,6 +327,8 @@ async def _put_embedding_config_locked(
         )
     except EmbeddingConfigError as exc:
         return _422("embedding_config_invalid", exc.detail, exc.hint)
+    except BackfillScopeBusy as exc:
+        return JSONResponse(status_code=409, content={"error": "embedding_backfill_busy", "detail": str(exc)})
     except BaseException as exc:  # cancellation must also restore the file
         restore_error = None
         if config_saved:
@@ -371,17 +370,15 @@ async def _put_embedding_config_locked(
     if not needs_backfill:
         return JSONResponse(status_code=200, content=_redact(saved))
 
-    # Step 4: kick off missing-only/full backfill and return a job reference.
-    status_obj = register_job()
-    backfill_svc = BackfillService(db=db, embeddings=new_embeddings)
-    background_tasks.add_task(_run_backfill_safely, backfill_svc, status_obj)
+    # Intent committed atomically above; only a separate Core worker executes it.
+    job_id = queued_job["id"]
 
     return JSONResponse(
         status_code=202,
         content={
             **_redact(saved),
-            "job_id": status_obj.job_id,
-            "status_url": f"/api/config/embedding/backfill/status?job_id={status_obj.job_id}",
+            "job_id": job_id,
+            "status_url": f"/api/config/embedding/backfill/status?job_id={job_id}",
             "reshape": {
                 table: {"did_reshape": did, "pending": pending}
                 for table, (did, pending) in reconciliation.reshape.items()
@@ -432,13 +429,14 @@ async def start_embedding_backfill(
             "set one in Settings → Embeddings first",
         )
     try:
-        await resume_embedding_transition(
-            db,
-            generation=getattr(embeddings, "index_generation", None),
-            space_signature=embeddings.space_signature,
-            model_name=embeddings.model_name,
-            dim=embeddings.dim,
-        )
+        if entity_types is not None and len(entity_types) > 128:
+            raise ValueError("entity_types exceeds 128 characters")
+        types = validate_types(tuple(t.strip() for t in entity_types.split(",")) if entity_types is not None else None)
+        job = await EmbeddingJobs(db).request(embeddings, types)
+    except ValueError as exc:
+        return _422("embedding_entity_types_invalid", str(exc), "use a subset of the seven embedding entity types")
+    except BackfillScopeBusy as exc:
+        return JSONResponse(status_code=409, content={"error": "embedding_backfill_busy", "detail": str(exc)})
     except EmbeddingGenerationMismatch as exc:
         return JSONResponse(
             status_code=409,
@@ -449,91 +447,33 @@ async def start_embedding_backfill(
             },
         )
 
-    types = tuple(t.strip() for t in entity_types.split(",")) if entity_types else None
-    status_obj = register_job()
-    svc = BackfillService(db=db, embeddings=embeddings)
-    background_tasks.add_task(_run_backfill_safely, svc, status_obj, types)
     return JSONResponse(
         status_code=202,
         content={
-            "job_id": status_obj.job_id,
-            "status_url": f"/api/config/embedding/backfill/status?job_id={status_obj.job_id}",
-            "entity_types": list(types) if types else "all",
+            "job_id": job["id"],
+            "status_url": f"/api/config/embedding/backfill/status?job_id={job['id']}",
+            "entity_types": list(types) if entity_types is not None else "all",
         },
     )
 
 
 @router.get("/api/config/embedding/backfill/status")
-async def get_backfill_status(job_id: str | None = Query(default=None)) -> Any:
+async def get_backfill_status(request: Request, job_id: str | None = Query(default=None)) -> Any:
     """Polling endpoint for the Settings UI progress bar.
 
     With `job_id`: return that specific job's snapshot. Without: return
     the most recent job (handy for the UI to pick up an in-progress
     backfill after a page refresh).
     """
-    if job_id:
-        status = get_status(job_id)
-        if status is None:
-            raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
-        return status.snapshot()
-    latest = latest_status()
-    if latest is None:
-        return {"state": "idle", "job_id": None}
-    return latest.snapshot()
+    status = await EmbeddingJobs(request.app.state.db).status(job_id)
+    if status is None and job_id:
+        raise HTTPException(status_code=404, detail=f"unknown job_id: {job_id}")
+    return status or {"state": "idle", "job_id": None}
 
 
-# ---------------------------------------------------------------------------
-# Background-task helper
-# ---------------------------------------------------------------------------
-
-
-async def _run_backfill_safely(
-    svc: BackfillService,
-    status: JobStatus,
-    entity_types: tuple[str, ...] | None = None,
-) -> None:
-    """Wraps BackfillService.run_backfill so unhandled exceptions land in
-    the status snapshot rather than the background-task logger.
-
-    The API is one writer process under ADR 0017, so a process-local lock is
-    the ownership boundary for background backfills.  Revalidate and resume
-    the bound generation only after acquiring it: a queued healthy run can
-    recover a same-generation failure, while a stale run never touches a
-    newer generation.
-    """
-    async with _BACKFILL_LOCK:
-        generation = getattr(svc._embeddings, "index_generation", None)
-        try:
-            if generation is not None:
-                await resume_embedding_transition(
-                    svc._db,
-                    generation=generation,
-                    space_signature=svc._embeddings.space_signature,
-                    model_name=svc._embeddings.model_name,
-                    dim=svc._embeddings.dim,
-                )
-            await svc.run_backfill(status, entity_types=entity_types)
-        except Exception as exc:  # noqa: BLE001
-            status.state = "failed"
-            status.error = str(exc)
-            logger.exception("backfill job %s failed", status.job_id)
-        finally:
-            if generation is not None:
-                await finish_embedding_transition(
-                    svc._db,
-                    generation=generation,
-                    success=status.state == "complete",
-                    error=status.error,
-                )
-                current = await get_embedding_index_state(svc._db)
-                if (
-                    status.state == "complete"
-                    and current is not None
-                    and current.generation == generation
-                    and current.status == "failed"
-                ):
-                    status.state = "failed"
-                    status.error = (
-                        current.last_error
-                        or "embedding index consistency check failed"
-                    )
+@router.post("/api/config/embedding/backfill/{job_id}/cancel")
+async def cancel_backfill(request: Request, job_id: str) -> Any:
+    try:
+        return await EmbeddingJobs(request.app.state.db).cancel(job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

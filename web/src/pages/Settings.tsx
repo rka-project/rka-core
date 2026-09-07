@@ -428,15 +428,14 @@ function EmbeddingsConfigCard() {
     setDim(String(sub.dim ?? 768))
   }, [config])
 
-  // Backfill status polling while a job is active.
+  // Read the durable latest job after a page refresh, then poll active work.
   const { data: backfill } = useQuery({
     queryKey: ["embedding-backfill", activeJobId],
     queryFn: () => api.getEmbeddingBackfillStatus(activeJobId ?? undefined),
-    enabled: activeJobId !== null,
     refetchInterval: (q) => {
       const last = q.state.data as BackfillStatus | undefined
       if (!last) return POLL_INTERVAL_MS
-      if (last.state === "complete" || last.state === "failed") return false
+      if (last.state === "idle" || last.state === "complete" || last.state === "failed") return false
       return POLL_INTERVAL_MS
     },
   })
@@ -702,7 +701,7 @@ function EmbeddingsConfigCard() {
         )}
 
         {/* Backfill progress */}
-        {activeJobId && backfill && (
+        {backfill?.job_id && (
           <div className="rounded-md border p-3 space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="font-semibold">Re-embedding research records</span>

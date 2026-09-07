@@ -1,9 +1,9 @@
 """Embedding-backfill orchestration.
 
-v2.4 (Mission D T2-gate): synchronous foreground job ("synchronous" =
-no Redis/Celery; runs in the API container's process). The PUT
-/api/config/embedding handler returns 202 + {job_id, status_url}
-immediately and the actual loop runs via FastAPI BackgroundTask.
+Startup/config/manual backfill now uses embedding_jobs.EmbeddingJobs for
+durable intent and the separate Core worker for this cursor loop. The legacy
+in-memory registry below remains for pack-import compatibility; it is not the
+authority for embedding backfill status or execution ownership.
 
 v2.5.5 (mis_01KS1RFNM2T1HTB077G507T1FR Bug 3): the loop is generalized
 over all entity types backed by a vec_* table — claim, journal,
@@ -640,6 +640,8 @@ class BackfillService:
             # Batch-embed; a failure aborts THIS type only (the outer
             # loop catches and continues to the next type).
             try:
+                from rka.services.job_execution import assert_job_write
+                await assert_job_write(self._db)
                 vectors = await self._embeddings.embed_batch(
                     [t for _, t in work], is_query=False
                 )
@@ -683,6 +685,14 @@ class BackfillService:
                     if vec_available:
                         vec_blob = struct.pack(f"{len(vec)}f", *vec)
                         async with self._db.transaction():
+                            from rka.services.job_execution import assert_job_write, EmbeddingSourceChanged
+                            await assert_job_write(self._db)
+                            current_row = await self._db.fetchone(
+                                f"SELECT * FROM {cfg.source_table} WHERE {cfg.id_column}=? AND project_id IS ?",
+                                [entity_id, row.get("project_id")],
+                            )
+                            if current_row is None or cfg.compose_text(current_row) != text:
+                                raise EmbeddingSourceChanged("embedding source changed during inference; retry required")
                             generation_guard = getattr(
                                 self._embeddings,
                                 "assert_current_generation",

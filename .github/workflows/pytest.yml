@@ -140,6 +140,7 @@ jobs:
           python -m pytest -q --tb=short --strict-markers tests/test_infra/test_embedding_resource_boundary.py tests/test_services/test_embedding_backends.py
           python -m pip install "sqlite-vec==0.1.6"
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_embedding_resource_backfill.py tests/test_services/test_embedding_backfill.py
+          python -m pytest -q --tb=short --strict-markers tests/test_services/test_durable_embedding_backfill.py tests/test_api/test_durable_embedding_jobs.py tests/test_infra/test_database_transactions.py
 
   docker-core:
     runs-on: ubuntu-latest

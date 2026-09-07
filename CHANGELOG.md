@@ -7,6 +7,12 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- Startup/config/manual embedding backfills are durable queue intents executed
+  by the separate Core worker, with heartbeat, generation/lease-fenced writes,
+  finite retry, persistent progress, cancellation and missing-row resume after
+  process loss. Settings reloads persisted progress. Source edits during inference
+  cannot silently complete a stale embedding job. API-only installations must
+  run a worker; see [lifecycle and remaining entry-point boundaries](docs/embedding_backends.md#durable-backfill-lifecycle-unreleased-hardening).
 - Built-in embedding backends reject oversized prepared inputs (default 8 KiB)
   without truncating source text, bound logical calls and provider batches, and
   enforce a whole-call deadline with one active call per process. Native work

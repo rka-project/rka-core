@@ -133,11 +133,51 @@ cancelled or timed-out caller does not release admission until native work ends.
   guarantee that ONNX or a remote server stopped computing.
 
 This is not a hard RSS sandbox or a cross-process inference lock. A hung native
-call can keep admission busy. API backfill still runs in-process with volatile
-status; durable ownership, supervised recovery and moving Core inference out of
-the API are the next E1b slice. Chunking/truncation and offline re-indexing need
+call can keep admission busy. Startup/config/manual backfills now use the durable
+worker lifecycle below. Chunking/truncation and offline re-indexing still need
 separate encoding and migration decisions. See the
 [E1a design](superpowers/specs/2026-09-06-embedding-resource-boundary.md).
+
+## Durable backfill lifecycle (unreleased hardening)
+
+Startup, **Save configuration**, and `POST /api/config/embedding/backfill` only
+queue work. A separate **`rka worker`** loads the saved backend configuration and
+performs these backfills. Docker Compose already starts that worker; an API-only
+or foreground installation must start it separately using the same data/config
+directory. No worker means the job remains visibly pending, not complete.
+
+Jobs, generation identity, attempt count, backoff, progress and leases live in
+SQLite. Settings reads the latest persisted job after a page refresh. A worker
+renews its lease during inference; an expired, cancelled or superseded attempt
+cannot write vectors or declare completion. A replacement worker resumes via
+the missing-row scan and does not recalculate already committed compatible rows.
+Progress counts are **per attempt** and may reset on retry. Startup does not
+create unlimited new attempts after exhaustion or explicit cancellation.
+
+The existing status URL accepts durable `job_` IDs (older volatile `bf_` IDs are
+not recoverable after upgrade). Status keeps the existing `pending`, `running`,
+`complete`, `failed` states and adds generation/attempt/lease/backoff fields.
+`POST /api/config/embedding/backfill/{job_id}/cancel` invalidates an active lease
+and stores `failed` with `error_code=embedding_backfill_cancelled`; it does not
+promise to stop an already-running native or remote inference. A new explicit
+backfill POST retries without deleting the previous job record or good vectors.
+
+Identical or narrower requests reuse an active job. A wider/different scope
+returns `409 embedding_backfill_busy`; wait for or cancel the active job before
+requesting the new scope. Invalid entity types return 422 before enqueueing.
+These remain installation-wide operator endpoints, not public demo permissions.
+
+Without a stored dimension, startup stays lexical and does **not** probe a model;
+use Settings **Test connection**, then save to detect and persist the dimension.
+Deploy API and worker from the same release. No new schema is introduced; the
+existing queue is already excluded from research knowledge packs.
+
+This lifecycle applies to startup/config/manual backfill. Pack-import indexing
+still has its separate volatile progress and inline vector-building path, and
+the legacy project/force CLI is not the new recovery mechanism. Those remaining
+entry points, full native-inference process isolation, real-model memory limits,
+and offline dimension maintenance are separate release gates. See the
+[E1b design](superpowers/specs/2026-09-06-durable-embedding-backfill.md).
 
 ## Switching backends
 

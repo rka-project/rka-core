@@ -176,7 +176,9 @@ class EmbeddingService:
         if self.db is None:
             return
         from rka.services.embedding_index import assert_embedding_generation
+        from rka.services.job_execution import assert_job_write
 
+        await assert_job_write(self.db)
         await assert_embedding_generation(
             self.db,
             generation=self.index_generation,

@@ -190,20 +190,10 @@ async def lifespan(app: FastAPI):
                 embedding_cfg = cfg_svc.load_config()
 
             if not (embedding_cfg.config or {}).get("dim"):
-                probe = await cfg_svc.test_config(embedding_cfg)
-                if not probe.ok or not probe.detected_dim:
-                    raise EmbeddingConfigError(
-                        "embedding dimension is missing and the backend probe failed",
-                        hint="repair the backend, then save the embedding configuration again",
-                    )
-                normalized = dict(embedding_cfg.config or {})
-                normalized["dim"] = int(probe.detected_dim)
-                embedding_cfg = embedding_cfg.model_copy(update={"config": normalized})
-                if not config_missing:
-                    embedding_cfg = cfg_svc.save_config(
-                        embedding_cfg,
-                        actor="system-dimension-detect",
-                    )
+                raise EmbeddingConfigError(
+                    "embedding dimension is missing; startup will not run model inference",
+                    hint="test and save the embedding configuration in Settings to detect dimensions",
+                )
 
             embeddings = EmbeddingService.from_config(embedding_cfg.model_dump(), db=db)
             logger.info(
@@ -253,15 +243,12 @@ async def lifespan(app: FastAPI):
     if embeddings is not None:
         # Missing-only reconciliation is cheap when the index is complete and
         # is the restart path for an interrupted generation transition.
-        from rka.services.embedding_backfill import BackfillService, register_job
+        from rka.services.embedding_jobs import EmbeddingJobs, BackfillScopeBusy
 
-        status_obj = register_job()
-        startup_backfill = BackfillService(db=db, embeddings=embeddings)
-        background_tasks.append(
-            asyncio.create_task(
-                config_routes._run_backfill_safely(startup_backfill, status_obj)
-            )
-        )
+        try:
+            await EmbeddingJobs(db).request(embeddings, automatic=True)
+        except BackfillScopeBusy:
+            logger.info("existing narrower backfill retained; no duplicate startup inference")
 
     context = ContextEngine(
         db=db,

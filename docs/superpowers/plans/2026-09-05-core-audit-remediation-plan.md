@@ -1,7 +1,7 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界、I1/I2 已确认写入缺陷及 E1a embedding 资源入口的实现和本机验收。第四批完整 Core 3483 passed；E1b 生命周期、跨平台、剩余覆盖及发布门待验收，尚未推送、合并或部署。
+- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界、I1/I2 已确认写入缺陷、E1a embedding 资源入口及 E1b 主回填生命周期的实现和本机验收。第五批完整 Core 3514 passed，基础安装 84 passed；pack/旧 CLI 等剩余 embedding 入口、真实模型 RSS、跨平台及发布门待验收，尚未推送、合并或部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
@@ -120,7 +120,12 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
   [设计](../specs/2026-09-06-embedding-resource-boundary.md)、
   [施工记录](2026-09-06-core-embedding-resource-validation.md)。默认策略为超长
   prepared input 拒绝，不截断原文；UTF-8 byte/padding 预算不等同精确 token/RSS。
-  E1b 仍需持久化所有权与独立运行边界，不将 E1a 等同 #158 关闭。
+  E1b 的 startup/PUT/manual 主链路已使用持久化任务和独立 Core worker，覆盖
+  generation 去重、heartbeat/lease 写入保护、进程丢失恢复、有限重试、取消及
+  持久状态；[设计](../specs/2026-09-06-durable-embedding-backfill.md)、
+  [第五批验收](2026-09-06-core-durable-backfill-validation.md)。全量 Core 3514 passed。
+  Pack 导入的 API 内向量循环、旧项目/force CLI、完整原生推理隔离及真实 RSS
+  尚未收口，不将 E1a/E1b 主链路等同 #158 关闭。
 - 第一提交补合成旧索引和长文输入回归；随后给所有 embedding 入口统一的有界
   输入策略、批次预算、并发限制、超时和可观测拒绝/截断行为。原始研究文本不改写。
 - 总 token 数之外，还要限制单条长度、批次数及最长序列造成的 padding；按后端
