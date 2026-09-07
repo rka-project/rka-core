@@ -7,70 +7,15 @@ import json
 import logging
 from pathlib import Path
 
+from rka.infra.embedding_documents import (
+    build_artifact_text as build_artifact_text,
+    build_figure_text as build_figure_text,
+)
 from rka.infra.ids import generate_id
 from rka.services.base import BaseService
 
 logger = logging.getLogger(__name__)
 
-
-def _parse_claims(claims: str | list[dict] | None) -> list[dict]:
-    """Parse stored figure claims into a list."""
-    if claims is None:
-        return []
-    if isinstance(claims, list):
-        return [claim for claim in claims if isinstance(claim, dict)]
-    try:
-        parsed = json.loads(claims)
-    except (json.JSONDecodeError, TypeError):
-        return []
-    return [claim for claim in parsed if isinstance(claim, dict)] if isinstance(parsed, list) else []
-
-
-def build_artifact_text(
-    filename: str,
-    filetype: str | None = None,
-    mime: str | None = None,
-    metadata: dict | str | None = None,
-) -> str:
-    """Build a text representation suitable for artifact search embeddings."""
-    parts = [filename]
-    if filetype:
-        parts.append(f"filetype: {filetype}")
-    if mime:
-        parts.append(f"mime: {mime}")
-    if metadata:
-        if isinstance(metadata, str):
-            try:
-                parsed_metadata = json.loads(metadata)
-            except (json.JSONDecodeError, TypeError):
-                metadata_text = metadata
-            else:
-                metadata_text = json.dumps(parsed_metadata, sort_keys=True)
-        else:
-            metadata_text = json.dumps(metadata, sort_keys=True)
-        parts.append(f"metadata: {metadata_text}")
-    return "\n".join(part for part in parts if part).strip()
-
-
-def build_figure_text(
-    caption: str | None,
-    summary: str | None,
-    claims: str | list[dict] | None,
-) -> str:
-    """Build a text representation suitable for figure search embeddings."""
-    parts: list[str] = []
-    if caption:
-        parts.append(f"caption: {caption}")
-    if summary:
-        parts.append(f"summary: {summary}")
-    claim_texts = [
-        claim.get("claim", "").strip()
-        for claim in _parse_claims(claims)
-        if claim.get("claim")
-    ]
-    if claim_texts:
-        parts.append("claims: " + "; ".join(claim_texts[:5]))
-    return "\n".join(parts).strip()
 
 
 class ArtifactService(BaseService):

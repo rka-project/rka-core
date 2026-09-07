@@ -759,10 +759,15 @@ class ClaimService(BaseService):
         if not self.embeddings:
             return {"outcome": "skipped", "reason": "embeddings_disabled"}
 
+        from rka.infra.embedding_documents import compose_document
+
+        text = compose_document("claim", row)
+        if not text:
+            return {"outcome": "skipped", "reason": "empty"}
         await self.embeddings.embed_and_store(
-            "claim", claim_id, row["content"], project_id=self.project_id
+            "claim", claim_id, text, project_id=self.project_id
         )
-        return {"outcome": "updated", "char_count": len(row["content"])}
+        return {"outcome": "updated", "char_count": len(text)}
 
     async def _flag_for_review(self, item_id: str, item_type: str, issues: list[str]) -> None:
         """Flag an item for Brain review."""

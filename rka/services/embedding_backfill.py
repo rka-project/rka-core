@@ -43,6 +43,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal, Mapping, Sequence
 
+from rka.infra.embedding_documents import compose_document
 from rka.infra.embedding_resources import EmbeddingInputLimit, EmbeddingResourceLimits
 
 logger = logging.getLogger(__name__)
@@ -160,36 +161,6 @@ class _EntityBackfillConfig:
     id_column: str = "id"
 
 
-def _join_parts(*parts: Any) -> str:
-    """Join non-empty stripped string parts with single spaces."""
-    return " ".join(
-        str(p).strip() for p in parts if p and str(p).strip()
-    ).strip()
-
-
-def _build_artifact_text_from_row(r: Mapping[str, Any]) -> str:
-    # Imported lazily to avoid an import cycle with rka.services.artifacts.
-    from rka.services.artifacts import build_artifact_text
-
-    return build_artifact_text(
-        filename=r.get("filename") or "",
-        filetype=r.get("filetype"),
-        mime=r.get("mime"),
-        metadata=r.get("metadata"),
-    )
-
-
-def _build_figure_text_from_row(r: Mapping[str, Any]) -> str:
-    # Imported lazily to avoid an import cycle with rka.services.artifacts.
-    from rka.services.artifacts import build_figure_text
-
-    return build_figure_text(
-        caption=r.get("caption"),
-        summary=r.get("summary"),
-        claims=r.get("claims"),
-    )
-
-
 # Cursor templates: each non-claims template uses an anti-join against
 # embedding_metadata so we only pull entities that lack a matching row.
 # Combined with T1's DELETE-on-reshape and T3's 3-tuple needs_reembed
@@ -201,7 +172,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="claim",
         source_table="claims",
         vec_table="vec_claims",
-        compose_text=lambda r: (r.get("content") or "").strip(),
+        compose_text=lambda r: compose_document("claim", r),
         # Pending is decided by the absence of an embedding_metadata row, the
         # same test every other entity type uses -- NOT by the
         # `claims.embedding_pending` flag. That flag drifts: in a real store
@@ -234,7 +205,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="journal",
         source_table="journal",
         vec_table="vec_journal",
-        compose_text=lambda r: _join_parts(r.get("content"), r.get("summary")),
+        compose_text=lambda r: compose_document("journal", r),
         pending_cursor_sql=(
             "SELECT j.id, j.content, j.summary, j.project_id FROM journal j "
             "WHERE NOT EXISTS ("
@@ -259,7 +230,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="decision",
         source_table="decisions",
         vec_table="vec_decisions",
-        compose_text=lambda r: _join_parts(r.get("question"), r.get("rationale")),
+        compose_text=lambda r: compose_document("decision", r),
         pending_cursor_sql=(
             "SELECT d.id, d.question, d.rationale, d.project_id FROM decisions d "
             "WHERE NOT EXISTS ("
@@ -284,7 +255,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="literature",
         source_table="literature",
         vec_table="vec_literature",
-        compose_text=lambda r: _join_parts(r.get("title"), r.get("abstract")),
+        compose_text=lambda r: compose_document("literature", r),
         pending_cursor_sql=(
             "SELECT l.id, l.title, l.abstract, l.project_id FROM literature l "
             "WHERE NOT EXISTS ("
@@ -309,7 +280,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="mission",
         source_table="missions",
         vec_table="vec_missions",
-        compose_text=lambda r: _join_parts(r.get("objective"), r.get("context")),
+        compose_text=lambda r: compose_document("mission", r),
         pending_cursor_sql=(
             "SELECT mi.id, mi.objective, mi.context, mi.project_id "
             "FROM missions mi "
@@ -335,7 +306,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="artifact",
         source_table="artifacts",
         vec_table="vec_artifacts",
-        compose_text=_build_artifact_text_from_row,
+        compose_text=lambda r: compose_document("artifact", r),
         pending_cursor_sql=(
             "SELECT a.id, a.filename, a.filetype, a.mime, a.metadata, a.project_id "
             "FROM artifacts a "
@@ -361,7 +332,7 @@ _ENTITY_BACKFILL_CONFIGS: dict[str, _EntityBackfillConfig] = {
         entity_type="figure",
         source_table="figures",
         vec_table="vec_artifacts",
-        compose_text=_build_figure_text_from_row,
+        compose_text=lambda r: compose_document("figure", r),
         pending_cursor_sql=(
             "SELECT f.id, f.caption, f.summary, f.claims, f.project_id "
             "FROM figures f "
@@ -395,40 +366,17 @@ async def stored_metadata_hashes_match(
     model_name: str,
     dimensions: int,
 ) -> bool:
-    """Verify legacy metadata hashes against the current canonical text.
+    """Compatibility wrapper for bounded, read-only per-row document checks.
 
-    This keyset-paged scan is used only while adopting a pre-generation
-    index. It avoids either trusting stale vectors or needlessly discarding a
-    healthy existing installation.
+    This alone does not prove physical vector or embedding-space coherence.
     """
+    from rka.services.embedding_verification import iter_stored_document_checks
 
-    from rka.infra.embeddings import EmbeddingService
-
-    for entity_type, cfg in _ENTITY_BACKFILL_CONFIGS.items():
-        last_id = ""
-        while True:
-            rows = await db.fetchall(
-                f"""SELECT s.*, m.content_hash AS _embedding_content_hash
-                    FROM {cfg.source_table} s
-                    JOIN embedding_metadata m
-                      ON m.project_id = s.project_id
-                     AND m.entity_type = ?
-                     AND m.entity_id = s.{cfg.id_column}
-                    WHERE m.model_name = ? AND m.dimensions = ?
-                      AND s.{cfg.id_column} > ?
-                    ORDER BY s.{cfg.id_column} LIMIT ?""",
-                [entity_type, model_name, dimensions, last_id, 8],
-            )
-            if not rows:
-                break
-            for row in rows:
-                try:
-                    text = cfg.compose_text(row)
-                except Exception:  # noqa: BLE001
-                    return False
-                if row["_embedding_content_hash"] != EmbeddingService.content_hash(text):
-                    return False
-            last_id = rows[-1][cfg.id_column]
+    async for check in iter_stored_document_checks(
+        db, model_name=model_name, dimensions=dimensions,
+    ):
+        if check.status != "verified":
+            return False
     return True
 
 

@@ -524,8 +524,9 @@ class MissionService(BaseService):
         if not self.embeddings:
             return {"outcome": "skipped", "reason": "embeddings_disabled"}
 
-        parts = [str(row.get("objective") or "").strip(), str(row.get("context") or "").strip()]
-        text = " ".join(part for part in parts if part).strip()
+        from rka.infra.embedding_documents import compose_document
+
+        text = compose_document("mission", row)
         if not text:
             return {"outcome": "skipped", "reason": "empty"}
 

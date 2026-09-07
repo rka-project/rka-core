@@ -145,6 +145,10 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 **E2 — 可执行的离线重建与保守索引采用**
 
+- 2026-09-07 E2a 本机实现与验收通过：[分批设计与边界](../specs/2026-09-07-embedding-index-recovery.md)。
+  [施工与验收记录](2026-09-07-core-embedding-recovery-validation.md)。
+  第一批统一七类输入/hash、逐行验证、同空间旧索引的保守采用和覆盖率配方；
+  E2b 的只读检查/独占协议、E2c 的备份/离线换维度/resume 仍待施工。
 - 依赖 E1 的输入策略和唯一任务所有权。实现 Core CLI 的状态检查、dry-run、
   受监督离线重建、resume；旧 backfill CLI 委托同一 generation-aware 服务。
   E1c 已完成旧 CLI 的同空间入队委托和 hash compatibility；这不代替本节的

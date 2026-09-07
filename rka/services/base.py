@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from rka.constants import DEFAULT_PROJECT_ID
 from rka.infra.database import Database
+from rka.infra.embedding_documents import DOCUMENT_SPECS, compose_document
 from rka.infra.ids import generate_id
 
 if TYPE_CHECKING:
@@ -237,26 +238,16 @@ class BaseService:
 
     # ---- Embedding sync ----
 
-    _EMBED_TEXT_MAP: dict[str, list[str]] = {
-        "journal": ["content", "summary"],
-        "decision": ["question", "rationale"],
-        "literature": ["title", "abstract"],
-        "mission": ["objective", "context"],
-        # Cluster vector embeddings are parked (mission-A scope); cluster FTS
-        # populates via _FTS_CONFIG instead.
-        "claim": ["content"],
-    }
-
     async def _sync_embedding(self, entity_type: str, entity_id: str, data: dict) -> None:
         """Generate and store embedding for an entity (if embedding service available)."""
-        if not self.embeddings:
-            return
-        text_fields = self._EMBED_TEXT_MAP.get(entity_type, [])
-        parts = [str(data.get(f) or "") for f in text_fields if data.get(f)]
-        text = " ".join(parts).strip()
-        if not text:
+        # Cluster vector embeddings remain parked; unsupported types are not
+        # accidentally admitted by the shared document codec.
+        if not self.embeddings or entity_type not in DOCUMENT_SPECS:
             return
         try:
+            text = compose_document(entity_type, data)
+            if not text:
+                return
             await self.embeddings.embed_and_store(
                 entity_type,
                 entity_id,

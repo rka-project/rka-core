@@ -155,18 +155,35 @@ async def _stored_index_adoption_status(
     )
     if not await _active_index_rows_are_coherent(db, state):
         return None
-    # Legacy metadata predates a durable generation marker. Prove that its
-    # stored content hashes still match canonical text before adopting it;
-    # healthy existing installs keep their vectors, while stale rows trigger a
-    # one-time clean rebuild.
-    from rka.services.embedding_backfill import stored_metadata_hashes_match
+    # Only reached for eligible legacy identity + coherent rows. Keep each
+    # hash-verified pair; invalidate only unprovable derived pairs under the
+    # caller's migration/write transaction. State adoption and these deletions
+    # roll back together. Source content is never modified.
+    from rka.infra.embedding_documents import DOCUMENT_SPECS
+    from rka.services.embedding_verification import iter_stored_document_checks
 
-    if not await stored_metadata_hashes_match(
-        db,
-        model_name=model_name,
-        dimensions=dim,
-    ):
-        return None
+    async for check in iter_stored_document_checks(db, model_name=model_name, dimensions=dim):
+        if check.status == "verified":
+            continue
+        spec = DOCUMENT_SPECS[check.entity_type]
+        vector_filter = " AND entity_type = ?" if spec.vec_table == "vec_artifacts" else ""
+        params = [check.entity_id, check.project_id]
+        if vector_filter:
+            params.append(check.entity_type)
+        await db.execute(
+            f"DELETE FROM {spec.vec_table} WHERE id = ? AND project_id = ?{vector_filter}",
+            params,
+        )
+        await db.execute(
+            """DELETE FROM embedding_metadata
+               WHERE entity_id = ? AND project_id = ? AND entity_type = ?""",
+            [check.entity_id, check.project_id, check.entity_type],
+        )
+        if check.entity_type == "claim":
+            await db.execute(
+                "UPDATE claims SET embedding_pending = 1 WHERE id = ? AND project_id = ?",
+                [check.entity_id, check.project_id],
+            )
     return "ready" if await _active_index_has_full_coverage(db, state) else "reindexing"
 
 
@@ -333,6 +350,10 @@ async def reconcile_embedding_index(
             [generation, space_signature, model_name, dim],
         )
         reshape = await reshape_all_vec_tables_if_needed(db, dim=dim, force=True)
+        # This is a global new-space transition, not selective legacy reuse.
+        # Per-table reshape removes known types; unknown legacy metadata must
+        # not survive as purported members of the new generation either.
+        await db.execute("DELETE FROM embedding_metadata")
         transitioned = True
         state = EmbeddingIndexState(
             generation=generation,
@@ -496,12 +517,20 @@ async def _active_index_rows_are_coherent(
 ) -> bool:
     """Return whether every stored row belongs to one usable vector space."""
 
+    from rka.infra.embedding_documents import DOCUMENT_SPECS
+
     mismatch = await db.fetchone(
-        """SELECT 1 AS mismatch FROM embedding_metadata
-           WHERE model_name <> ? OR dimensions <> ? LIMIT 1""",
-        [state.model_name, state.dimensions],
+        f"""SELECT 1 AS mismatch FROM embedding_metadata
+            WHERE model_name <> ? OR dimensions <> ?
+               OR entity_type NOT IN ({", ".join("?" for _ in DOCUMENT_SPECS)}) LIMIT 1""",
+        [state.model_name, state.dimensions, *DOCUMENT_SPECS],
     )
     if mismatch:
+        return False
+    if await db.fetchone(
+        """SELECT 1 AS mismatch FROM vec_artifacts
+           WHERE entity_type NOT IN ('artifact', 'figure') OR entity_type IS NULL LIMIT 1"""
+    ):
         return False
 
     table_entities = {
@@ -582,47 +611,43 @@ async def _active_index_has_full_coverage(
 ) -> bool:
     """Return whether every eligible canonical record has current metadata."""
 
-    eligible_sources = {
-        "claim": ("claims", "length(trim(coalesce(content, ''))) > 0"),
-        "journal": (
-            "journal",
-            "length(trim(coalesce(content, '') || ' ' || coalesce(summary, ''))) > 0",
-        ),
-        "decision": (
-            "decisions",
-            "length(trim(coalesce(question, '') || ' ' || coalesce(rationale, ''))) > 0",
-        ),
-        "literature": (
-            "literature",
-            "length(trim(coalesce(title, '') || ' ' || coalesce(abstract, ''))) > 0",
-        ),
-        "mission": (
-            "missions",
-            "length(trim(coalesce(objective, '') || ' ' || coalesce(context, ''))) > 0",
-        ),
-        "artifact": ("artifacts", "length(trim(coalesce(filename, ''))) > 0"),
-        "figure": (
-            "figures",
-            "length(trim(coalesce(caption, '') || ' ' || coalesce(summary, '') "
-            "|| ' ' || coalesce(claims, ''))) > 0",
-        ),
-    }
-    for entity_type, (source_table, eligible_sql) in eligible_sources.items():
+    from rka.infra.embedding_documents import DOCUMENT_SPECS, compose_document
+
+    for entity_type, spec in DOCUMENT_SPECS.items():
         if entity_types is not None and entity_type not in entity_types:
             continue
-        pending = await db.fetchone(
-            f"""SELECT 1 AS pending FROM {source_table} s
-                WHERE {eligible_sql}
-                  AND (? IS NULL OR s.project_id = ?)
-                  AND NOT EXISTS (
-                      SELECT 1 FROM embedding_metadata m
-                      WHERE m.project_id = s.project_id
-                        AND m.entity_type = ? AND m.entity_id = s.id
-                        AND m.model_name = ? AND m.dimensions = ?
-                  )
-                LIMIT 1""",
-            [project_id, project_id, entity_type, state.model_name, state.dimensions],
-        )
-        if pending:
-            return False
+        last_id = None
+        # Only fetch records without current metadata. Python's shared recipe
+        # is the eligibility authority, including Unicode whitespace and JSON
+        # figure claims; SQLite trim/raw JSON cannot express those semantics.
+        while True:
+            pending = await db.fetchall(
+                f"""SELECT s.id, {", ".join("s." + field for field in spec.fields)}
+                    FROM {spec.source_table} s
+                    WHERE (? IS NULL OR s.id > ?)
+                      AND (? IS NULL OR s.project_id = ?)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM embedding_metadata m
+                          WHERE m.project_id = s.project_id
+                            AND m.entity_type = ? AND m.entity_id = s.id
+                            AND m.model_name = ? AND m.dimensions = ?
+                      )
+                    ORDER BY s.id LIMIT ?""",
+                [last_id, last_id, project_id, project_id, entity_type,
+                 state.model_name, state.dimensions, 8],
+            )
+            if not pending:
+                break
+            for row in pending:
+                if row["id"] is None:
+                    # Corrupt/unaddressable sources cannot prove readiness;
+                    # also avoid an endlessly repeated NULL cursor page.
+                    return False
+                try:
+                    if compose_document(entity_type, row):
+                        return False
+                except Exception:  # noqa: BLE001
+                    # Malformed source is unverified, not proof of completion.
+                    return False
+            last_id = pending[-1]["id"]
     return True

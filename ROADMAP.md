@@ -29,6 +29,11 @@ active product, dependency, or roadmap track.
 | RKA App Foundation 0 | Implementation candidate under review | Merge and pin the first released Core image by digest. |
 | RKA Writer | W0 design phase | Ratify the Authoring IR and validate one fully traceable paragraph. |
 
+Core audit-remediation E2 has started with
+[E2a document parity and conservative legacy adoption](docs/superpowers/specs/2026-09-07-embedding-index-recovery.md).
+Offline inspect/rebuild/resume and maintenance exclusion remain pending; this
+is distinct from the completed Core-separation E0-E2 program above.
+
 The pre-rebaseline roadmap, including the completed Workbench program, is
 preserved in
 [`docs/history/rka-roadmap-pre-rebaseline-2026-09-03.md`](docs/history/rka-roadmap-pre-rebaseline-2026-09-03.md).
