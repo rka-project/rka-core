@@ -791,6 +791,11 @@ def admin():
     pass
 
 
+from rka.cli_embedding import embedding_admin as _embedding_admin  # noqa: E402
+
+admin.add_command(_embedding_admin)
+
+
 @admin.command("list-orphan-supersedes")
 @click.option(
     "--project", "project_id", required=True,

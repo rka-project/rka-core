@@ -47,7 +47,13 @@ eligibility. SQLite's ASCII `trim` and raw figure-claims JSON are not substitute
 for that recipe. Invalid composition blocks readiness rather than being treated
 as empty. Global generation scope and optional coverage scopes remain intact.
 
-## E2b: inspect / dry-run and maintenance ownership (next)
+## E2b: inspect / dry-run and maintenance ownership (in progress)
+
+E2b1 implements the read-only commands described in
+[the operator guide](../../embedding-inspection.md).
+[The E2b design](2026-09-07-embedding-inspection-maintenance.md) specifies their
+limits and the proposed E2b2 lifetime-admission protocol; that protocol is not
+yet active in API/worker processes.
 
 Build the Core inspection/dry-run service and CLI on these proofs, loading the
 persisted config rather than constructing an unrelated environment-default

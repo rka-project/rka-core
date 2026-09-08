@@ -31,8 +31,11 @@ active product, dependency, or roadmap track.
 
 Core audit-remediation E2 has started with
 [E2a document parity and conservative legacy adoption](docs/superpowers/specs/2026-09-07-embedding-index-recovery.md).
-Offline inspect/rebuild/resume and maintenance exclusion remain pending; this
+Executable offline rebuild/resume and maintenance exclusion remain pending; this
 is distinct from the completed Core-separation E0-E2 program above.
+
+E2b1 now adds [read-only inspection and recovery previews](docs/embedding-inspection.md).
+E2b2 runtime admission and E2c executable offline rebuild/resume remain pending.
 
 The pre-rebaseline roadmap, including the completed Workbench program, is
 preserved in
