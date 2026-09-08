@@ -40,6 +40,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from rka.models.journal import JournalCaptureMode
+
+JournalCaptureModeLit = JournalCaptureMode
+
 
 # Safe external-source registration and explicit interpretation admission.
 RegisteredSourceKindLit = Literal[
@@ -85,6 +89,7 @@ ImportanceLit = Literal[
 # not in the journal-source set; the document-ingestion path widens it
 # via ``IngestSourceLit`` below).
 SourceLit = Literal["brain", "executor", "pi", "web_ui", "llm"]
+JournalActorLit = Literal["brain", "executor", "pi", "llm", "web_ui", "system"]
 
 # Journal type — v2 canonical set plus legacy-accepted superset (silently
 # normalized via ``JOURNAL_TYPE_MAP``). See ``rka/models/journal.py``

@@ -67,7 +67,8 @@ from rka.models.semantic_patch import (
 )
 from rka.models.outline import OutlineProposalRequest
 from rka.models.decision import DecisionUpdate
-from rka.models.journal import JournalEntryUpdate
+from rka.models.journal import JournalAttributionCorrection, JournalEntryCreate, JournalEntryUpdate
+from rka.mcp._enums import JournalCaptureModeLit
 from rka.models.literature import LiteratureUpdate
 
 # NOTE: enum aliases from ``rka.mcp._enums`` are imported on a per-batch
@@ -129,6 +130,7 @@ from rka.mcp._enums import (  # noqa: E402, F811
     PlanningStageLit,
     LitStatusLit,
     NoteTypeLit,
+    JournalActorLit,
     SourceLit,
     SemanticPatchAIOriginLit,
     SemanticPatchAIBoundaryLit,
@@ -532,6 +534,15 @@ class QuerySourcesArgs(ProjectScopedArgs, PaginatedFiltersMixin):
         Optional[str],
         Field(default=None, description="Optional src_ id for provenance detail."),
     ] = None
+
+
+class QueryNoteAttributionHistoryArgs(ProjectScopedArgs):
+    """[ANY] Read ordered, immutable attribution corrections; not a full note edit history."""
+
+    operation: Literal["note_attribution_history"] = "note_attribution_history"
+    id: str
+    after_revision: int = Field(default=0, ge=0)
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class QueryExperimentsArgs(ProjectScopedArgs, PaginatedFiltersMixin):
@@ -1328,6 +1339,7 @@ QueryArgsUnion = Annotated[
         QueryEntityArgs,
         # List-mode
         QueryJournalArgs,
+        QueryNoteAttributionHistoryArgs,
         QueryLiteratureArgs,
         QueryMissionArgs,
         QueryReportArgs,
@@ -1458,7 +1470,8 @@ class _NoteProvenance(BaseModel):
 class RecordNoteArgs(ProjectScopedArgs):
     """[ANY] RECORD a journal entry (note, log, directive).
 
-    Phase-X²' rule: ``source='pi'`` REQUIRES ``verbatim_input``. The
+    PI input requires ``verbatim_input`` unless explicit ``raw_capture``
+    snapshots supplied content on creation. The
     typed-args layer rejects calls without it pre-flight (PI provenance
     discipline — preserves PI's exact wording for intellectual attribution).
 
@@ -1468,6 +1481,11 @@ class RecordNoteArgs(ProjectScopedArgs):
     """
 
     operation: Literal["record_note"] = "record_note"
+    capture_mode: JournalCaptureModeLit = Field(
+        default="unknown",
+        description="Omission makes no capture claim. Use raw_capture only for supplied "
+        "original text; absent verbatim_input snapshots content. unknown makes no capture claim.",
+    )
 
     # Required body
     content: Annotated[
@@ -1501,8 +1519,8 @@ class RecordNoteArgs(ProjectScopedArgs):
         Field(
             default=None,
             description=(
-                "Verbatim PI wording. REQUIRED when source='pi' "
-                "(preserves PI intellectual attribution)."
+                "Exact original text. PI source requires it unless explicit raw_capture "
+                "snapshots supplied content on creation. Never use a paraphrase here."
             ),
         ),
     ] = None
@@ -1561,13 +1579,17 @@ class RecordNoteArgs(ProjectScopedArgs):
 
     @model_validator(mode="after")
     def _enforce_pi_verbatim(self) -> "RecordNoteArgs":
-        if self.source == "pi" and (
+        if self.capture_mode != "raw_capture" and self.source == "pi" and (
             self.verbatim_input is None or not str(self.verbatim_input).strip()
         ):
             raise ValueError(
                 "rka_record_note(source='pi'): verbatim_input is required "
                 "(preserves PI's exact wording for intellectual attribution)"
             )
+        JournalEntryCreate(
+            content=self.content, source=self.source, capture_mode=self.capture_mode,
+            verbatim_input=self.verbatim_input,
+        )
         return self
 
 
@@ -3921,6 +3943,18 @@ BatchDExecuteUnion = Annotated[
 # ---------------------------------------------------------------------------
 
 
+class CorrectNoteAttributionArgs(ProjectScopedArgs, JournalAttributionCorrection):
+    """Correct asserted source/original with reason, revision and exact-retry request ID.
+
+    Actor is caller-asserted, not authenticated. Read the note's attribution_revision
+    first. Both source and verbatim_input (nullable for non-PI) are required.
+    """
+
+    operation: Literal["correct_note_attribution"] = "correct_note_attribution"
+    id: str
+    actor: JournalActorLit
+
+
 class UpdateNoteArgs(ProjectScopedArgs):
     """Update a journal entry (content / type / confidence / links).
 
@@ -3932,9 +3966,8 @@ class UpdateNoteArgs(ProjectScopedArgs):
     set (bare ``str`` lets Brain emit ``importance='URGENT'`` and bypass
     the journal.importance CHECK at DB INSERT time).
 
-    Phase-X²' provenance discipline: the ``source='pi' -> verbatim_input``
-    invariant mirrored from ``RecordNoteArgs`` — silent demotion of PI
-    attribution on the update path is blocked here too.
+    Attribution changes require ``correct_note_attribution``. Ordinary edits
+    cannot overwrite source or original text without correction history.
     """
 
     operation: Literal["update_note"] = "update_note"
@@ -4002,12 +4035,13 @@ class UpdateNoteArgs(ProjectScopedArgs):
         Optional[str],
         Field(
             default=None,
-            description="Updated verbatim PI input (REQUIRED when source=='pi').",
+            description="Deprecated: use correct_note_attribution; non-null values rejected.",
+            deprecated=True,
         ),
     ] = None
     source: Annotated[
         Optional[SourceLit],
-        Field(default=None, description="Updated actor-of-record."),
+        Field(default=None, description="Deprecated: use correct_note_attribution.", deprecated=True),
     ] = None
     related_decisions: Annotated[
         Optional[list[str]],
@@ -4034,8 +4068,8 @@ class UpdateNoteArgs(ProjectScopedArgs):
             self.pinned,
             self.tags,
             self.phase,
-            self.verbatim_input,
-            self.source,
+            self.__dict__.get("verbatim_input"),
+            self.__dict__.get("source"),
             self.related_decisions,
             self.related_literature,
             self.related_mission,
@@ -4051,17 +4085,10 @@ class UpdateNoteArgs(ProjectScopedArgs):
         return self
 
     @model_validator(mode="after")
-    def _enforce_pi_verbatim(self) -> "UpdateNoteArgs":
-        # Phase-X²' regression: silent PI-attribution demotion on the
-        # update path. Mirrors ``RecordNoteArgs._enforce_pi_verbatim``.
-        # Fires whenever source is being set to 'pi'; the no-op guard
-        # above covers the both-None case (id-only update).
-        if self.source == "pi" and (
-            self.verbatim_input is None or not str(self.verbatim_input).strip()
-        ):
+    def _require_attribution_correction(self) -> "UpdateNoteArgs":
+        if self.__dict__.get("source") is not None or self.__dict__.get("verbatim_input") is not None:
             raise ValueError(
-                "update_note(source='pi'): verbatim_input is required "
-                "(preserves PI's exact wording for intellectual attribution)"
+                "source/verbatim_input require correct_note_attribution with reason and revision"
             )
         return self
 
@@ -5132,6 +5159,7 @@ BatchCExecuteUnion = Annotated[
     Union[
         # Updates
         UpdateNoteArgs,
+        CorrectNoteAttributionArgs,
         UpdateDecisionArgs,
         UpdateLiteratureArgs,
         UpdateMissionArgs,
@@ -5225,6 +5253,7 @@ ExecuteArgsUnion = Annotated[
         GenerateLMStudioSemanticPatchArgs,
         # ===== Batch C — UPDATE/LIFECYCLE/SUBMIT (22) =====
         UpdateNoteArgs,
+        CorrectNoteAttributionArgs,
         UpdateDecisionArgs,
         UpdateLiteratureArgs,
         UpdateMissionArgs,
@@ -5293,6 +5322,7 @@ __all__ = [
     "QueryClaimScopeArgs",
     "QueryInterpretationCandidatesArgs",
     "QuerySourcesArgs",
+    "QueryNoteAttributionHistoryArgs",
     "QueryExperimentsArgs",
     "QueryExperimentRunsArgs",
     "QueryExperimentObservationsArgs",
@@ -5414,6 +5444,7 @@ __all__ = [
     "BatchDExecuteUnion",
     # Batch C — UPDATE / LIFECYCLE / SUBMIT write models
     "UpdateNoteArgs",
+    "CorrectNoteAttributionArgs",
     "UpdateDecisionArgs",
     "UpdateLiteratureArgs",
     "UpdateMissionArgs",

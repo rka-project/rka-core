@@ -7,7 +7,7 @@ from datetime import datetime
 import pytest
 
 from rka.models.decision import DecisionCreate, DecisionUpdate
-from rka.models.journal import JournalEntryCreate, JournalEntryUpdate
+from rka.models.journal import JournalAttributionCorrection, JournalEntryCreate, JournalEntryUpdate
 from rka.models.literature import LiteratureCreate, LiteratureUpdate
 from rka.models.project import ProjectCreate
 from rka.services import literature as literature_module
@@ -29,9 +29,11 @@ async def _create_project(db, project_id: str, name: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target_kind", ["missing", "foreign"])
+@pytest.mark.parametrize("path", ["ordinary", "attribution_correction"])
 async def test_note_update_rejects_unowned_target_without_side_effects(
     db,
     target_kind: str,
+    path: str,
 ) -> None:
     foreign_project = "proj_foreign_note_update"
     await _create_project(db, foreign_project, "Foreign Note Update")
@@ -45,17 +47,26 @@ async def test_note_update_rejects_unowned_target_without_side_effects(
     changes_before = db.conn.total_changes
 
     with pytest.raises(NoteNotFoundError, match="not found"):
-        await NoteService(db, project_id=PROJECT_ID).update(
-            target_id,
-            JournalEntryUpdate(
-                content="must not change the source",
-                source="pi",
-                tags=["phantom-note-tag"],
-                related_decisions=["dec_phantom_note_target"],
-            ),
-        )
+        service = NoteService(db, project_id=PROJECT_ID)
+        if path == "ordinary":
+            await service.update(
+                target_id,
+                JournalEntryUpdate(
+                    content="must not change the source",
+                    tags=["phantom-note-tag"],
+                    related_decisions=["dec_phantom_note_target"],
+                ),
+            )
+        else:
+            await service.correct_attribution(target_id, JournalAttributionCorrection(
+                source="pi", verbatim_input="Must not be written",
+                expected_revision=0, request_id="unowned", actor="executor", reason="Scope probe",
+            ))
 
     assert db.conn.total_changes == changes_before
+    assert await db.fetchone(
+        "SELECT id FROM journal_attribution_revisions WHERE journal_id=?", [target_id],
+    ) is None
     assert await db.fetchone(
         "SELECT content, source FROM journal WHERE id = ?",
         [foreign.id],

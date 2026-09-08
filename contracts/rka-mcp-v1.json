@@ -369,11 +369,11 @@
   "operation_counts": {
     "core_maturity": {
       "preview": 22,
-      "stable": 84
+      "stable": 86
     },
     "ownership": {
       "agentic-unsupported": 5,
-      "core": 106,
+      "core": 108,
       "core-legacy": 1,
       "writer-compatibility": 43
     }
@@ -1138,6 +1138,97 @@
         "type": "object"
       },
       "tool": "rka_query"
+    },
+    "correct_note_attribution": {
+      "category": "journal",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi",
+              "llm",
+              "web_ui",
+              "system"
+            ],
+            "type": "string"
+          },
+          "capture_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unknown",
+                  "raw_capture",
+                  "agent_restatement"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "operation": {
+            "const": "correct_note_attribution",
+            "default": "correct_note_attribution",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi",
+              "llm",
+              "web_ui"
+            ],
+            "type": "string"
+          },
+          "verbatim_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expected_revision",
+          "request_id",
+          "actor",
+          "reason",
+          "source",
+          "verbatim_input",
+          "project_id",
+          "id"
+        ],
+        "type": "object"
+      },
+      "tool": "rka_execute"
     },
     "create_cluster": {
       "category": "claims",
@@ -2577,6 +2668,42 @@
       },
       "tool": "rka_query"
     },
+    "note_attribution_history": {
+      "category": "journal",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "after_revision": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "operation": {
+            "const": "note_attribution_history",
+            "default": "note_attribution_history",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "id"
+        ],
+        "type": "object"
+      },
+      "tool": "rka_query"
+    },
     "orphan_supersedes": {
       "category": "decision",
       "input_schema": {
@@ -3139,6 +3266,15 @@
         },
         "additionalProperties": false,
         "properties": {
+          "capture_mode": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "raw_capture",
+              "agent_restatement"
+            ],
+            "type": "string"
+          },
           "confidence": {
             "default": "hypothesis",
             "enum": [
@@ -5270,7 +5406,8 @@
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "deprecated": true
           },
           "status": {
             "anyOf": [
@@ -5348,7 +5485,8 @@
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "deprecated": true
           }
         },
         "required": [
@@ -5869,6 +6007,93 @@
             },
             "required": [
               "entity_type",
+              "id"
+            ],
+            "type": "object"
+          },
+          "CorrectNoteAttributionArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "actor": {
+                "enum": [
+                  "brain",
+                  "executor",
+                  "pi",
+                  "llm",
+                  "web_ui",
+                  "system"
+                ],
+                "type": "string"
+              },
+              "capture_mode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "unknown",
+                      "raw_capture",
+                      "agent_restatement"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "expected_revision": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "operation": {
+                "const": "correct_note_attribution",
+                "default": "correct_note_attribution",
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              "request_id": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "brain",
+                  "executor",
+                  "pi",
+                  "llm",
+                  "web_ui"
+                ],
+                "type": "string"
+              },
+              "verbatim_input": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "expected_revision",
+              "request_id",
+              "actor",
+              "reason",
+              "source",
+              "verbatim_input",
+              "project_id",
               "id"
             ],
             "type": "object"
@@ -6959,6 +7184,15 @@
           "RecordNoteArgs": {
             "additionalProperties": false,
             "properties": {
+              "capture_mode": {
+                "default": "unknown",
+                "enum": [
+                  "unknown",
+                  "raw_capture",
+                  "agent_restatement"
+                ],
+                "type": "string"
+              },
               "confidence": {
                 "default": "hypothesis",
                 "enum": [
@@ -8733,7 +8967,8 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "deprecated": true
               },
               "status": {
                 "anyOf": [
@@ -8811,7 +9046,8 @@
                     "type": "null"
                   }
                 ],
-                "default": null
+                "default": null,
+                "deprecated": true
               }
             },
             "required": [
@@ -9077,6 +9313,7 @@
                 "batch_import": "#/$defs/BatchImportArgs",
                 "bootstrap_workspace": "#/$defs/BootstrapWorkspaceArgs",
                 "bulk_update": "#/$defs/BulkUpdateArgs",
+                "correct_note_attribution": "#/$defs/CorrectNoteAttributionArgs",
                 "create_cluster": "#/$defs/CreateClusterArgs",
                 "create_gate": "#/$defs/CreateGateArgs",
                 "create_mission": "#/$defs/CreateMissionArgs",
@@ -9159,6 +9396,9 @@
               },
               {
                 "$ref": "#/$defs/UpdateNoteArgs"
+              },
+              {
+                "$ref": "#/$defs/CorrectNoteAttributionArgs"
               },
               {
                 "$ref": "#/$defs/UpdateDecisionArgs"
@@ -10163,6 +10403,38 @@
             ],
             "type": "object"
           },
+          "QueryNoteAttributionHistoryArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "after_revision": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "operation": {
+                "const": "note_attribution_history",
+                "default": "note_attribution_history",
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "id"
+            ],
+            "type": "object"
+          },
           "QueryPendingMaintenanceArgs": {
             "additionalProperties": false,
             "properties": {
@@ -10594,6 +10866,7 @@
                 "mission": "#/$defs/QueryMissionArgs",
                 "mission_guard": "#/$defs/QueryMissionGuardArgs",
                 "multi_hop": "#/$defs/QueryMultiHopArgs",
+                "note_attribution_history": "#/$defs/QueryNoteAttributionHistoryArgs",
                 "orphan_supersedes": "#/$defs/OrphanSupersedesArgs",
                 "pending_maintenance": "#/$defs/QueryPendingMaintenanceArgs",
                 "provenance": "#/$defs/QueryProvenanceArgs",
@@ -10625,6 +10898,9 @@
               },
               {
                 "$ref": "#/$defs/QueryJournalArgs"
+              },
+              {
+                "$ref": "#/$defs/QueryNoteAttributionHistoryArgs"
               },
               {
                 "$ref": "#/$defs/QueryLiteratureArgs"

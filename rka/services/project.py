@@ -274,6 +274,7 @@ class ProjectService(BaseService):
         "review_queue",
         "claim_evidence_relations",
         "claim_scope_versions",
+        "journal_attribution_revisions",
         "source_admissions",
         "interpretation_review_events",
         "interpretation_candidate_hints",

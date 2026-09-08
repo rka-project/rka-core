@@ -2122,7 +2122,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "signature": (
             "rka_execute(operation='record_note', *, project_id, content, "
             "source='executor', type='note', confidence='hypothesis', "
-            "importance='normal', verbatim_input=None, phase=None, "
+            "importance='normal', verbatim_input=None, capture_mode='unknown', phase=None, "
             "tags=None, provenance={'related_decisions':[...], "
             "'related_literature':[...], 'related_mission':..., "
             "'supersedes':...})"
@@ -2130,6 +2130,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "required_fields": ["project_id", "content"],
         "optional_fields": [
             "source",
+            "capture_mode",
             "type",
             "confidence",
             "importance",
@@ -2141,7 +2142,8 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "pinned",
             "provenance",
         ],
-        "enums": _e("source", "note_type", "confidence", "importance"),
+        "enums": {**_e("source", "note_type", "confidence", "importance"),
+                  "capture_mode": ["unknown", "raw_capture", "agent_restatement"]},
         "examples": [
             {
                 "description": "Executor records a finding linked to a mission.",
@@ -2163,6 +2165,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
                     "content": "PI: prioritise latency over recall.",
                     "type": "directive",
                     "source": "pi",
+                    "capture_mode": "agent_restatement",
                     "verbatim_input": "Prioritise latency over recall.",
                 },
             },
@@ -2173,8 +2176,9 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "record_decision",
         ],
         "notes": (
-            "Phase-X²' rule: source='pi' REQUIRES verbatim_input. The "
-            "verb rejects calls without it pre-flight."
+            "Use explicit raw_capture for supplied original text or agent_restatement for an agent body. "
+            "Omitted mode is unknown, not inferred. PI source requires verbatim_input unless raw_capture "
+            "explicitly snapshots supplied content on creation. Content edits never overwrite originals."
         ),
     },
     "ingest_document": {
@@ -2267,8 +2271,40 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
                 },
             },
         ],
-        "related_operations": ["record_note", "bulk_update"],
-        "notes": None,
+        "related_operations": ["record_note", "bulk_update", "correct_note_attribution"],
+        "notes": "source/verbatim_input are deprecated on updates and rejected when non-null; use correct_note_attribution.",
+    },
+    "correct_note_attribution": {
+        "operation": "correct_note_attribution", "tool": "rka_execute",
+        "category": "journal", "role_tag": "ANY",
+        "summary": "Correct source/original with reason, revision guard and exact-retry request ID.",
+        "signature": "rka_execute(operation='correct_note_attribution', *, project_id, id, expected_revision, request_id, actor, reason, source, verbatim_input, capture_mode=None)",
+        "required_fields": ["project_id", "id", "expected_revision", "request_id", "actor", "reason", "source", "verbatim_input"],
+        "optional_fields": ["capture_mode"],
+        "enums": {"source": list(_ENUMS["source"]), "actor": ["brain", "executor", "pi", "llm", "web_ui", "system"],
+                  "capture_mode": ["unknown", "raw_capture", "agent_restatement"]},
+        "examples": [{
+            "description": "Correct a misattributed original after re-reading the note.",
+            "call": {"operation": "correct_note_attribution", "project_id": "prj_01ABC...",
+                     "id": "jrn_01XYZ...", "expected_revision": 0, "request_id": "correction-1",
+                     "actor": "executor", "reason": "Original supplied by PI",
+                     "source": "pi", "verbatim_input": "Preserve my exact wording."},
+        }],
+        "related_operations": ["entity", "note_attribution_history", "update_note"],
+        "notes": "Read attribution_revision with rka_query(operation='entity', id=...) first; journal listings are truncated. Actor is caller-asserted, not authenticated. Identical retries return the same immutable event, not the current note. Omitted/null capture_mode preserves the prior mode, including on retries after later changes. An explicit mode change is part of correction intent. raw_capture requires a supplied original even for non-PI; corrections never copy the edited body. Unknown originals must not be invented.",
+    },
+    "note_attribution_history": {
+        "operation": "note_attribution_history", "tool": "rka_query",
+        "category": "journal", "role_tag": "ANY",
+        "summary": "Read immutable attribution corrections in revision order.",
+        "signature": "rka_query(operation='note_attribution_history', *, project_id, id, after_revision=0, limit=50)",
+        "required_fields": ["project_id", "id"],
+        "optional_fields": ["after_revision", "limit"], "enums": {},
+        "examples": [{"description": "Read the first page of corrections.", "call": {
+            "operation": "note_attribution_history", "project_id": "prj_01ABC...", "id": "jrn_01XYZ...",
+        }}],
+        "related_operations": ["journal", "correct_note_attribution"],
+        "notes": "Not full note edit history. Revision zero has no correction events; this does not prove the original author. Paginate using the last returned revision as after_revision.",
     },
     # --- decisions ------------------------------------------------------
     "record_decision": {
@@ -3414,7 +3450,9 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "Legacy nested data={...} is accepted, but mixing both shapes or "
             "sending an empty update is rejected before any write. Preflight is "
             "whole-batch; HTTP execution is best-effort and can partially succeed, "
-            "so this operation is not transactional across entities."
+            "so this operation is not transactional across entities. "
+            "Journal source/verbatim_input updates are rejected during preflight; "
+            "use correct_note_attribution for each reasoned correction."
         ),
     },
     # --- missions -------------------------------------------------------

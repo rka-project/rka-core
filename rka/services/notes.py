@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 
 from rka.infra.ids import generate_id
-from rka.models.journal import JournalEntry, JournalEntryCreate, JournalEntryUpdate
+from rka.models.journal import (
+    JournalAttributionCorrection, JournalAttributionRevision,
+    JournalEntry, JournalEntryCreate, JournalEntryUpdate,
+    validate_capture,
+)
 from rka.services.base import BaseService, _now
 from rka.services.jobs import JobQueue
 
@@ -14,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 class NoteNotFoundError(ValueError):
     """Raised when a journal entry is absent from the active project scope."""
+
+
+class JournalAttributionError(ValueError):
+    """Invalid or unguarded journal attribution write."""
+
+
+class JournalAttributionConflict(JournalAttributionError):
+    """A stale revision or a reused request ID with different intent."""
 
 
 class NoteService(BaseService):
@@ -42,6 +54,7 @@ class NoteService(BaseService):
 
     async def create(self, data: JournalEntryCreate, actor: str | None = None) -> JournalEntry:
         """Create a new journal entry."""
+        data = JournalEntryCreate.model_validate(data.model_dump())
         entry_id = generate_id("journal")
         # An import executor is not the author of the supplied note. Keep
         # source/verbatim attribution intact and use actor only for execution
@@ -62,10 +75,10 @@ class NoteService(BaseService):
         async with self.db.transaction():
             await self.db.execute(
                 """INSERT INTO journal
-                   (id, type, content, summary, source, phase, verbatim_input,
+                   (id, type, content, summary, source, phase, verbatim_input, capture_mode,
                     related_decisions, related_literature, related_mission,
                     supersedes, confidence, importance, status, pinned, project_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     entry_id,
                     data.type,
@@ -74,6 +87,7 @@ class NoteService(BaseService):
                     source,
                     data.phase,
                     data.verbatim_input,
+                    data.capture_mode,
                     self._json_dumps(related_decisions),
                     self._json_dumps(related_literature),
                     data.related_mission,
@@ -257,9 +271,19 @@ class NoteService(BaseService):
         )
         return [await self._row_to_model(row) for row in rows]
 
-    async def update(self, entry_id: str, data: JournalEntryUpdate) -> JournalEntry:
+    async def update(
+        self, entry_id: str, data: JournalEntryUpdate, *, actor: str | None = None,
+    ) -> JournalEntry:
         """Update a journal entry."""
+        # Execution provenance is not asserted authorship (source), nor an
+        # authentication result. Keep omitted legacy actors explicitly marked.
+        actor_val = self._validate_actor("system" if actor is None else actor)
         dump = data.model_dump(exclude_none=True)
+        if {"source", "verbatim_input", "capture_mode"}.intersection(dump):
+            raise JournalAttributionError(
+                "source/verbatim_input require correct_note_attribution with "
+                "expected_revision, request_id, actor and reason"
+            )
         tags = dump.pop("tags", None)
         replace_related_decisions = "related_decisions" in dump
         replace_related_literature = "related_literature" in dump
@@ -282,7 +306,7 @@ class NoteService(BaseService):
 
         async with self.db.transaction():
             owned = await self.db.fetchone(
-                "SELECT id FROM journal WHERE id = ? AND project_id = ?",
+                "SELECT * FROM journal WHERE id = ? AND project_id = ?",
                 [entry_id, self.project_id],
             )
             if owned is None:
@@ -291,10 +315,12 @@ class NoteService(BaseService):
                     f"{self.project_id}"
                 )
 
+            before = {field: owned.get(field) for field in updates}
             if tags is not None:
+                before["tags"] = sorted(await self._get_tags("journal", entry_id))
                 await self._set_tags("journal", entry_id, tags)
 
-            if not updates:
+            if not updates and tags is None:
                 current = await self.get(entry_id)
                 if current is None:  # pragma: no cover - protected by write lock
                     raise RuntimeError("journal update target disappeared")
@@ -320,6 +346,7 @@ class NoteService(BaseService):
                     link_type="references",
                     target_type="decision",
                     target_ids=dump["related_decisions"],
+                    created_by=actor_val,
                 )
             if replace_related_literature:
                 await self._replace_outgoing_links(
@@ -328,6 +355,7 @@ class NoteService(BaseService):
                     link_type="cites",
                     target_type="literature",
                     target_ids=dump["related_literature"],
+                    created_by=actor_val,
                 )
             if replace_related_mission:
                 await self._replace_incoming_links(
@@ -336,6 +364,7 @@ class NoteService(BaseService):
                     link_type="produced",
                     source_type="mission",
                     source_ids=[data.related_mission] if data.related_mission else [],
+                    created_by=actor_val,
                 )
 
             # Re-sync FTS on content changes; defer embedding to job queue.
@@ -358,14 +387,125 @@ class NoteService(BaseService):
                             priority=110,
                         )
 
+            after = {field: updates[field] for field in before if field != "tags"}
+            if tags is not None:
+                after["tags"] = sorted(await self._get_tags("journal", entry_id))
+            fields = list(updates)
+            if tags is not None:
+                fields.append("tags")
             await self.audit(
                 "update",
                 "journal",
                 entry_id,
-                "system",
-                {"fields": list(updates.keys())},
+                actor_val,
+                {
+                    "fields": fields,
+                    "before": before,
+                    "after": after,
+                    "actor_basis": "legacy_default" if actor is None else "caller_asserted",
+                },
             )
-        return await self.get(entry_id)
+            # Return this mutation's read-back, not a later concurrent update.
+            result = await self.get(entry_id)
+            if result is None:  # pragma: no cover - protected by write lock
+                raise RuntimeError("journal update target disappeared")
+            return result
+
+    async def correct_attribution(
+        self, entry_id: str, data: JournalAttributionCorrection,
+    ) -> JournalAttributionRevision:
+        # Revalidate even for internal callers using model_construct/model_copy.
+        data = JournalAttributionCorrection.model_validate(data.model_dump())
+        async with self.db.transaction():
+            current = await self.db.fetchone(
+                "SELECT * FROM journal WHERE id = ? AND project_id = ?",
+                [entry_id, self.project_id],
+            )
+            if current is None:
+                raise NoteNotFoundError(f"journal entry {entry_id!r} not found")
+            previous = await self.db.fetchone(
+                "SELECT * FROM journal_attribution_revisions "
+                "WHERE project_id = ? AND journal_id = ? AND request_id = ?",
+                [self.project_id, entry_id, data.request_id],
+            )
+            if previous is not None:
+                intent = {
+                    "expected_revision": data.expected_revision,
+                    "actor": data.actor, "reason": data.reason,
+                    "after_source": data.source,
+                    "after_verbatim_input": data.verbatim_input,
+                    "after_capture_mode": data.capture_mode or previous["before_capture_mode"],
+                }
+                if any(previous[key] != value for key, value in intent.items()):
+                    raise JournalAttributionConflict("request_id already used with different correction data")
+                return JournalAttributionRevision.model_validate(previous)
+            if current["attribution_revision"] != data.expected_revision:
+                raise JournalAttributionConflict(
+                    f"attribution revision conflict: expected {data.expected_revision}, "
+                    f"current {current['attribution_revision']}; re-read before correcting"
+                )
+            capture_mode = data.capture_mode or current["capture_mode"]
+            try:
+                validate_capture(capture_mode, data.source, data.verbatim_input)
+            except ValueError as exc:
+                raise JournalAttributionError(str(exc)) from exc
+            if (current["source"] == data.source
+                    and current["verbatim_input"] == data.verbatim_input
+                    and current["capture_mode"] == capture_mode):
+                raise JournalAttributionError("attribution correction must change source, original or capture mode")
+            revision = data.expected_revision + 1
+            revision_id = generate_id("journal_attribution_revision")
+            await self.db.execute(
+                """INSERT INTO journal_attribution_revisions
+                   (id, project_id, journal_id, revision, expected_revision,
+                    request_id, actor, actor_basis, reason, before_source,
+                    before_verbatim_input, after_source, after_verbatim_input,
+                    before_capture_mode, after_capture_mode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 'caller_asserted', ?, ?, ?, ?, ?, ?, ?)""",
+                [revision_id, self.project_id, entry_id, revision, data.expected_revision,
+                 data.request_id, data.actor, data.reason, current["source"],
+                 current["verbatim_input"], data.source, data.verbatim_input,
+                 current["capture_mode"], capture_mode],
+            )
+            await self.db.execute(
+                """UPDATE journal SET source = ?, verbatim_input = ?,
+                          attribution_revision = ?, updated_at = ?, capture_mode = ?
+                   WHERE id = ? AND project_id = ?""",
+                [data.source, data.verbatim_input, revision, _now(), capture_mode, entry_id, self.project_id],
+            )
+            await self.audit("update", "journal", entry_id, data.actor, {
+                "fields": ["source", "verbatim_input", "capture_mode", "attribution_revision"],
+                "before": {"source": current["source"], "verbatim_input": current["verbatim_input"],
+                           "capture_mode": current["capture_mode"]},
+                "after": {"source": data.source, "verbatim_input": data.verbatim_input,
+                          "capture_mode": capture_mode},
+                "actor_basis": "caller_asserted", "reason": data.reason,
+                "attribution_revision": revision, "correction_id": revision_id,
+            })
+            result = await self.db.fetchone(
+                "SELECT * FROM journal_attribution_revisions WHERE id = ? AND project_id = ?",
+                [revision_id, self.project_id],
+            )
+            return JournalAttributionRevision.model_validate(result)
+
+    async def attribution_history(
+        self, entry_id: str, *, after_revision: int = 0, limit: int = 50,
+    ) -> list[JournalAttributionRevision]:
+        if after_revision < 0 or not 1 <= limit <= 200:
+            raise JournalAttributionError("after_revision must be >= 0 and limit must be 1..200")
+        async with self.db.transaction(write=False):
+            if await self.db.fetchone(
+                "SELECT id FROM journal WHERE id = ? AND project_id = ?",
+                [entry_id, self.project_id],
+            ) is None:
+                raise NoteNotFoundError(f"journal entry {entry_id!r} not found")
+            rows = await self.db.fetchall(
+                "SELECT * FROM journal_attribution_revisions "
+                "WHERE project_id = ? AND journal_id = ? AND revision > ? "
+                "ORDER BY revision LIMIT ?",
+                [self.project_id, entry_id, after_revision, limit],
+            )
+            return [JournalAttributionRevision.model_validate(row) for row in rows]
 
     async def _row_to_model(self, row: dict) -> JournalEntry:
         tags = await self._get_tags("journal", row["id"])
@@ -377,6 +517,8 @@ class NoteService(BaseService):
             content=row["content"],
             summary=row.get("summary"),
             source=row["source"],
+            attribution_revision=row.get("attribution_revision", 0),
+            capture_mode=row.get("capture_mode", "unknown"),
             phase=row.get("phase"),
             verbatim_input=row.get("verbatim_input"),
             related_decisions=self._json_loads(row.get("related_decisions")),

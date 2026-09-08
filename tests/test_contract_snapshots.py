@@ -59,16 +59,18 @@ def test_rest_v1_surface_and_dispositions_are_locked() -> None:
     assert snapshot["x-rka-operation-counts"] == {
         "ownership": {
             "agentic-unsupported": 10,
-            "core": 166,
+            "core": 168,
             "core-legacy": 6,
             "writer-compatibility": 53,
         },
-        "core_maturity": {"preview": 28, "stable": 138},
+        "core_maturity": {"preview": 28, "stable": 140},
     }
     assert len(AGENTIC_REST_OPERATIONS) == 10
     assert len(CORE_LEGACY_REST_OPERATIONS) == 6
     methods = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 138
+    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 140
+    assert "post" in snapshot["paths"]["/api/notes/{note_id}/attribution-corrections"]
+    assert "get" in snapshot["paths"]["/api/notes/{note_id}/attribution-history"]
     assert "post" in snapshot["paths"]["/api/config/embedding/backfill/{job_id}/cancel"]
     snapshotted_operations = {
         (method.upper(), path)
@@ -100,15 +102,16 @@ def test_mcp_v1_surface_and_dispositions_are_locked() -> None:
     assert snapshot["operation_counts"] == {
         "ownership": {
             "agentic-unsupported": 5,
-            "core": 106,
+            "core": 108,
             "core-legacy": 1,
             "writer-compatibility": 43,
         },
-        "core_maturity": {"preview": 22, "stable": 84},
+        "core_maturity": {"preview": 22, "stable": 86},
     }
-    assert len(snapshot["operations"]) == 84
+    assert len(snapshot["operations"]) == 86
+    assert {"correct_note_attribution", "note_attribution_history"} <= set(snapshot["operations"])
     assert tuple(snapshot["transport_tools"]) == tuple(sorted(MCP_TRANSPORT_TOOLS))
-    assert len(OPERATIONS_SCHEMA) == 155
+    assert len(OPERATIONS_SCHEMA) == 157
     assert len(WRITER_COMPATIBILITY_OPERATIONS) == 43
     assert len(AGENTIC_MCP_OPERATIONS) == 5
     assert len(CORE_LEGACY_MCP_OPERATIONS) == 1

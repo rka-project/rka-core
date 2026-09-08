@@ -7,7 +7,7 @@ import re
 from typing import TYPE_CHECKING
 
 from rka.models.literature import LiteratureCreate
-from rka.models.journal import JournalEntryCreate
+from rka.models.journal import JournalCaptureMode, JournalEntryCreate
 from rka.services.literature import LiteratureService
 from rka.infra.file_access import require_bounded_text
 from rka.services.bibtex import BibtexParseError, parse_basic_bibtex
@@ -338,6 +338,8 @@ class AcademicImportService:
         related_decisions: list[str] | None = None,
         related_mission: str | None = None,
         split_by_headings: bool = True,
+        *,
+        capture_mode: JournalCaptureMode = "raw_capture",
     ) -> dict:
         """Ingest a markdown document by splitting it into journal entries.
 
@@ -363,7 +365,7 @@ class AcademicImportService:
 
         # Fallback: if no sections found, treat the whole document as one entry
         if not sections:
-            sections = [{"heading": None, "body": content.strip()}]
+            sections = [{"heading": None, "body": content.strip(), "original": content}]
 
         results = {"created": [], "errors": [], "total_sections": len(sections)}
         base_tags = tags or []
@@ -392,6 +394,8 @@ class AcademicImportService:
             try:
                 data = JournalEntryCreate(
                     content=entry_content,
+                    capture_mode=capture_mode,
+                    verbatim_input=section["original"] if capture_mode == "raw_capture" else None,
                     type=entry_type,
                     source=source,
                     phase=phase,
@@ -419,7 +423,7 @@ class AcademicImportService:
     def _split_markdown(content: str) -> list[dict]:
         """Split markdown content by headings (## or ###).
 
-        Returns list of {heading: str | None, body: str} dicts.
+        Returns heading/body for display plus exact original input slices.
         """
         # Match ## or ### headings
         heading_pattern = re.compile(r"^(#{2,3})\s+(.+)$", re.MULTILINE)
@@ -433,7 +437,8 @@ class AcademicImportService:
         # Content before the first heading (preamble)
         preamble = content[:matches[0].start()].strip()
         if preamble:
-            sections.append({"heading": None, "body": preamble})
+            sections.append({"heading": None, "body": preamble,
+                             "original": content[:matches[0].start()]})
 
         # Each heading + its body
         for i, match in enumerate(matches):
@@ -442,7 +447,10 @@ class AcademicImportService:
             end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
             body = content[start:end].strip()
             if body or heading:
-                sections.append({"heading": heading, "body": body})
+                # Include any whitespace-only preamble in the first slice.
+                raw_start = 0 if i == 0 and not preamble else match.start()
+                sections.append({"heading": heading, "body": body,
+                                 "original": content[raw_start:end]})
 
         return sections
 

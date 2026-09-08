@@ -172,6 +172,23 @@ jobs:
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_durable_embedding_backfill.py tests/test_api/test_durable_embedding_jobs.py tests/test_infra/test_database_transactions.py
           python -m pytest -q --tb=short --strict-markers tests/test_services/test_backfill_entrypoints.py tests/test_cli/test_backfill_durable.py tests/test_api/test_import_durable.py tests/test_api/test_import_progress.py
 
+      - name: Verify journal attribution and capture on this platform
+        env:
+          RKA_DATA_DIR: ${{ runner.temp }}/rka-journal-i3-data
+          RKA_EMBEDDINGS_ENABLED: "false"
+          RKA_LLM_ENABLED: "false"
+          RKA_API_URL: http://127.0.0.1:1
+          HF_HUB_OFFLINE: "1"
+        run: >-
+          python -m pytest -q --tb=short --strict-markers
+          tests/test_db/test_migration_056.py tests/test_db/test_migration_057.py
+          tests/test_services/test_journal_update_audit.py
+          tests/test_services/test_journal_attribution.py
+          tests/test_services/test_journal_capture.py
+          tests/test_services/test_knowledge_pack_journal_attribution.py
+          tests/test_services/test_update_scope_guards.py
+          tests/test_mcp/test_core_reliability_journal_roundtrip.py
+
   docker-core:
     runs-on: ubuntu-latest
     timeout-minutes: 15
