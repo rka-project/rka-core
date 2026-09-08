@@ -110,14 +110,15 @@ async def test_logical_call_count_is_bounded(captured_backend):
 @pytest.mark.asyncio
 async def test_batches_are_bounded_and_preserve_output_order(captured_backend):
     backend, calls = captured_backend
-    texts = [f"{i} " + "x" * 4000 for i in range(17)]
+    size = min(4000, backend.resource_limits.max_input_bytes - 64)
+    texts = [f"{i} " + "x" * size for i in range(17)]
     assert await backend.embed_batch(texts) == [[float(i), 0.0] for i in range(17)]
     assert [text for batch in calls for text in batch] == texts
     for batch in calls:
         sizes = [len(text.encode("utf-8")) for text in batch]
         assert len(batch) <= 8
-        assert sum(sizes) <= 16_384
-        assert max(sizes) * len(batch) <= 16_384
+        assert sum(sizes) <= backend.resource_limits.max_batch_bytes
+        assert max(sizes) * len(batch) <= backend.resource_limits.max_padding_bytes
 
 
 @pytest.mark.asyncio
@@ -143,16 +144,19 @@ async def test_template_expansion_is_inside_the_limit():
 @pytest.mark.asyncio
 async def test_exact_byte_boundary_is_accepted(captured_backend):
     backend, calls = captured_backend
-    text = "0 " + "x" * 8190
+    text = "0 " + "x" * (backend.resource_limits.max_input_bytes - 2)
     assert await backend.embed(text) == [0.0, 0.0]
     assert calls == [[text]]
 
 
 @pytest.mark.asyncio
 async def test_total_call_bytes_are_checked_before_inference(captured_backend):
+    from dataclasses import replace
     backend, calls = captured_backend
+    backend.resource_limits = replace(backend.resource_limits, max_call_bytes=32768)
+    size = min(5000, backend.resource_limits.max_input_bytes - 2)
     with pytest.raises(RuntimeError, match="max_call_bytes"):
-        await backend.embed_batch(["0 " + "x" * 5000] * 64)
+        await backend.embed_batch(["0 " + "x" * size] * 64)
     assert calls == []
 
 
@@ -161,7 +165,18 @@ async def test_total_call_bytes_are_checked_before_inference(captured_backend):
 async def test_nomic_prefix_counts_toward_input_budget(is_query):
     backend = FastEmbedBackend()
     with pytest.raises(RuntimeError, match="embedding_input_limit"):
-        await backend.embed("x" * 8192, is_query=is_query)
+        await backend.embed("x" * backend.resource_limits.max_input_bytes, is_query=is_query)
+    assert backend._model is None
+
+
+@pytest.mark.asyncio
+async def test_native_ceiling_cannot_be_raised_by_saved_generic_limits():
+    backend = FastEmbedBackend(resource_limits={"max_input_bytes": 8192, "max_batch_bytes": 16384})
+    assert backend.resource_limits.max_input_bytes == 2048
+    assert backend.resource_limits.max_batch_bytes == 4096
+    assert backend.resource_limits.max_padding_bytes == 4096
+    with pytest.raises(RuntimeError, match="max_input_bytes=2048"):
+        await backend.embed("a " * 4085)
     assert backend._model is None
 
 

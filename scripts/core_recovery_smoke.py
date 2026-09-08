@@ -29,7 +29,7 @@ from rka.infra.database import Database  # noqa: E402
 from rka.infra.sqlite_backup import (  # noqa: E402
     backup_sqlite_database,
     fsync_directory,
-    protected_sqlite_runtime_paths,
+    is_protected_sqlite_path,
 )
 from rka.services.knowledge_pack import (  # noqa: E402
     _INSERT_ORDER,
@@ -888,7 +888,7 @@ def main() -> None:
     if report_input.is_symlink():
         parser.error("--report must not be a symbolic link")
     report_path = report_input.resolve()
-    if report_path in protected_sqlite_runtime_paths(source_path):
+    if is_protected_sqlite_path(source_path, report_path):
         parser.error("--report must not replace the source database or its runtime files")
     try:
         report = asyncio.run(_run(args))

@@ -2,7 +2,7 @@
 
 Inspection is deliberately separate from writable Database initialization.
 Plans describe required work; they never grant maintenance ownership or enqueue
-work. Cross-process exclusion and executable offline recovery are later gates.
+work. Executable offline recovery is a separate, explicitly owned service.
 """
 
 from __future__ import annotations
@@ -52,6 +52,16 @@ def _read_config(path: Path):
             model = (explicit or "").strip() or model
         from rka.infra.embedding_resources import EmbeddingResourceLimits
         EmbeddingResourceLimits.from_config(sub.get("resource_limits"))
+        if "timeout_seconds" in sub:
+            from rka.infra.embedding_resources import request_timeout
+            request_timeout(sub["timeout_seconds"])
+        if config.backend == "fastembed":
+            threads = sub.get("threads")
+            if threads is not None and (type(threads) is not int or threads < 1):
+                raise EmbeddingInspectionError("thread_budget_invalid")
+            cache = sub.get("cache_dir")
+            if cache is not None and not isinstance(cache, str):
+                raise EmbeddingInspectionError("cache_path_invalid")
         identity = {
             "source": "persisted", "backend": config.backend,
             "model_name": model, "dimensions": dim,

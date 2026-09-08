@@ -12,7 +12,7 @@ import math
 import threading
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Any, TypeVar
 
 
@@ -129,6 +129,19 @@ _ADMISSION = threading.BoundedSemaphore(1)
 _NATIVE_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rka-embedding")
 _HTTP_TASKS: set[asyncio.Task] = set()
 T = TypeVar("T")
+
+
+def native_resource_limits(config=None):
+    """Tighter ONNX ceilings, established by the default-model RSS gate.
+
+    Preserve compatible saved configuration while applying min(config, native
+    ceiling). This changes admission only, not accepted text or vector identity.
+    HTTP providers retain the shared configurable maxima.
+    """
+    limits = EmbeddingResourceLimits.from_config(config)
+    return replace(limits, max_input_bytes=min(limits.max_input_bytes, 2048),
+                   max_batch_bytes=min(limits.max_batch_bytes, 4096),
+                   max_padding_bytes=min(limits.max_padding_bytes, 4096))
 
 
 def request_timeout(value: Any) -> float:

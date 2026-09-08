@@ -77,3 +77,18 @@ async def test_inspection_reads_are_row_size_bounded(tmp_path):
     async with readonly_sqlite(source) as reader:
         with pytest.raises(sqlite3.DataError):
             await reader.fetchall("SELECT value FROM samples")
+
+
+def test_fixed_image_artifact_precedes_incompatible_wrapper(tmp_path, monkeypatch):
+    from rka.infra import readonly_sqlite as module
+    artifact = tmp_path / "vec0.so"
+    artifact.touch()
+    monkeypatch.setattr(module, "_CORE_IMAGE_VEC", artifact)
+    calls = []
+    class Connection:
+        def enable_load_extension(self, value):
+            calls.append(value)
+        def load_extension(self, path):
+            calls.append(path)
+    assert module._load_vec(Connection())
+    assert calls == [True, str(artifact), False]

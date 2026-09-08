@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+from rka.infra.runtime_lease import RuntimeLease
 
 from rka.infra.embedding_backends import (
     ConnectionTestResult,
@@ -129,6 +130,10 @@ class EmbeddingConfigService:
     # ------------------------------------------------------------------
 
     def save_config(self, config: EmbeddingConfig, actor: str) -> EmbeddingConfig:
+        with RuntimeLease(self.config_path):
+            return self._save_config(config, actor)
+
+    def _save_config(self, config: EmbeddingConfig, actor: str) -> EmbeddingConfig:
         """Persist `config`, after first writing the prior file (if any) to
         `embedding_config.backup.json`. Atomic via tmp+rename. File-mode 0600.
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import aiosqlite
 import sqlite3
+from rka.infra.runtime_lease import RuntimeLease, finish_before_cancellation
 
 
 class ReadOnlySQLite:
@@ -30,15 +31,27 @@ class ReadOnlySQLite:
             return dict(row) if row is not None else None
 
 
+_CORE_IMAGE_VEC = Path("/usr/local/lib/vec0.so")
+
+
 def _load_vec(connection) -> bool:
-    """Only load the installed package, never a path supplied by data/config."""
-    try:
-        import sqlite_vec
-    except ImportError:
-        return False
+    """Load installed sqlite-vec or Core's fixed image artifact, never data paths."""
     try:
         connection.enable_load_extension(True)
-        sqlite_vec.load(connection)
+        # The Core image's pinned artifact takes precedence over a possibly
+        # incompatible Python wheel (notably Linux ARM64). No env/data path.
+        if _CORE_IMAGE_VEC.is_file() and not _CORE_IMAGE_VEC.is_symlink():
+            try:
+                connection.load_extension(str(_CORE_IMAGE_VEC))
+                return True
+            except sqlite3.Error:
+                pass
+        try:
+            import sqlite_vec
+        except ImportError:
+            return False
+        else:
+            sqlite_vec.load(connection)
         return True
     except (AttributeError, sqlite3.Error):
         return False
@@ -58,17 +71,26 @@ def _read_authorizer(action, arg1, arg2, database, trigger):
 
 
 @asynccontextmanager
-async def readonly_sqlite(path: Path, *, timeout_seconds: float = 30):
+async def readonly_sqlite(path: Path, *, timeout_seconds: float = 30, maintenance_lease=None):
     """Yield a read snapshot with a query deadline and 2 MiB row-value ceiling."""
     source = path.expanduser().resolve(strict=True)
     if not source.is_file():
         raise ValueError("inspection requires an existing database file")
     # as_uri quotes ?, # and Windows drive paths rather than treating them as
     # SQLite URI switches. No directory creation/chmod/normal Database.connect.
-    connection = await aiosqlite.connect(
-        source.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=2,
-    )
+    lease = None
+    connection = None
+    if maintenance_lease is not None:
+        maintenance_lease.assert_owner(source)
+    else:
+        lease = RuntimeLease(source).acquire()
+    async def open_connection():
+        nonlocal connection
+        connection = await aiosqlite.connect(
+            source.as_uri() + "?mode=ro", uri=True, isolation_level=None, timeout=2,
+        )
     try:
+        await finish_before_cancellation(open_connection())
         connection.row_factory = aiosqlite.Row
         await connection.execute("PRAGMA query_only = ON")
         await connection.execute("PRAGMA trusted_schema = OFF")
@@ -85,4 +107,9 @@ async def readonly_sqlite(path: Path, *, timeout_seconds: float = 30):
     finally:
         # Closing releases the read transaction even after cancellation or a
         # malformed schema. No COMMIT, checkpoint, schema initialization or DML.
-        await connection.close()
+        async def close_connection():
+            if connection is not None:
+                await connection.close()
+            if lease is not None:
+                lease.close()
+        await finish_before_cancellation(close_connection())

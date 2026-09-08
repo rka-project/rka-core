@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from rka.infra import sqlite_backup
-from rka.infra.sqlite_backup import backup_sqlite_database, fsync_directory, fsync_file
+from rka.infra.sqlite_backup import backup_sqlite_database, fsync_directory, fsync_file, is_protected_sqlite_path
 
 
 def test_backup_includes_committed_rows_still_in_wal(tmp_path: Path) -> None:
@@ -172,3 +172,8 @@ def test_failed_backup_preserves_existing_destination(tmp_path: Path) -> None:
 
     assert destination.read_bytes() == b"known-good-destination"
     assert list(tmp_path.glob(".existing.db.*.tmp")) == []
+def test_runtime_and_recovery_namespace_is_protected(tmp_path):
+    source = tmp_path / "db.sqlite"
+    assert is_protected_sqlite_path(source, tmp_path / "db.sqlite.runtime-locks" / "gate.lock")
+    assert is_protected_sqlite_path(source, tmp_path / "db.sqlite.runtime-locks" / "some-backup" / "original.json")
+    assert not is_protected_sqlite_path(source, tmp_path / "report.json")

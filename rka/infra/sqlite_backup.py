@@ -10,6 +10,8 @@ import tempfile
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+from contextlib import nullcontext
+from rka.infra.runtime_lease import RuntimeLease, lock_directory
 
 
 @dataclass(frozen=True)
@@ -39,10 +41,31 @@ def protected_sqlite_runtime_paths(source: str | Path) -> frozenset[Path]:
     return frozenset(protected)
 
 
+def is_protected_sqlite_path(source: str | Path, target: str | Path) -> bool:
+    """Protect both SQLite sidecars and the entire admission/recovery namespace."""
+    resolved = Path(target).expanduser().resolve()
+    return (resolved in protected_sqlite_runtime_paths(source)
+            or resolved.is_relative_to(lock_directory(source)))
+
+
 def backup_sqlite_database(
     source: str | Path,
     destination: str | Path,
+    *,
+    maintenance_lease=None,
 ) -> SQLiteBackupResult:
+    source_path = Path(source).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"SQLite database not found: {source_path}")
+    if maintenance_lease is not None:
+        maintenance_lease.assert_owner(source_path)
+    elif Path(destination).expanduser().resolve().is_relative_to(lock_directory(source_path)):
+        raise ValueError("Backup destination must not replace database runtime files")
+    with (nullcontext() if maintenance_lease is not None else RuntimeLease(source_path)):
+        return _backup_sqlite_database(source, destination)
+
+
+def _backup_sqlite_database(source, destination) -> SQLiteBackupResult:
     """Create an integrity-checked snapshot with SQLite's online backup API.
 
     The source connection is query-only, so this operation can safely snapshot

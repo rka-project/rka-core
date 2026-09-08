@@ -238,6 +238,8 @@ async def reconcile_embedding_index(
     model_name: str,
     dim: int,
     allow_legacy_adoption: bool = True,
+    maintenance_lease=None,
+    force_rebuild: bool = False,
 ) -> EmbeddingIndexReconciliation:
     """Make ``space_signature`` the one active, restart-safe generation.
 
@@ -259,7 +261,12 @@ async def reconcile_embedding_index(
         # The preflight check used by the API is only advisory. Recheck after
         # BEGIN IMMEDIATE so another process cannot populate an old-dimension
         # table between validation and DROP/CREATE.
-        await assert_online_dimension_compatible(db, dim=dim)
+        if maintenance_lease is None:
+            if force_rebuild:
+                raise ValueError("force rebuild requires maintenance ownership")
+            await assert_online_dimension_compatible(db, dim=dim)
+        else:
+            maintenance_lease.assert_owner(db.db_path)
         current = await get_embedding_index_state(db)
         matches = bool(
             current
@@ -268,7 +275,7 @@ async def reconcile_embedding_index(
             and current.dimensions == dim
         )
 
-        if matches:
+        if matches and not force_rebuild:
             # The durable generation can be created while sqlite-vec is
             # unavailable.  When the extension later returns, the physical
             # tables may still have their bootstrap dimension even though the
@@ -304,7 +311,7 @@ async def reconcile_embedding_index(
             )
 
         legacy_status = None
-        if current is None and allow_legacy_adoption:
+        if current is None and allow_legacy_adoption and not force_rebuild:
             legacy_status = await _stored_index_adoption_status(
                 db,
                 model_name=model_name,

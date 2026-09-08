@@ -14,6 +14,7 @@ from typing import AsyncIterator
 import aiosqlite
 
 from rka.infra.file_lock import release_exclusive, try_acquire_exclusive
+from rka.infra.runtime_lease import RuntimeLease, canonical_path, finish_before_cancellation
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class Database:
     """Async SQLite database wrapper."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, *, maintenance_lease: RuntimeLease | None = None):
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
         self._vec_loaded = False
@@ -34,9 +35,26 @@ class Database:
         self._transaction_depth = 0
         self._savepoint_counter = 0
         self._phase2_memory_lock = asyncio.Lock()
+        self._runtime_lease: RuntimeLease | None = None
+        self._maintenance_lease = maintenance_lease
 
     async def connect(self) -> None:
         """Open database connection and apply PRAGMAs."""
+        if self._conn is not None:
+            raise RuntimeError("database already connected")
+        if self.db_path != ":memory:":
+            self.db_path = str(canonical_path(self.db_path))
+            if self._maintenance_lease is not None:
+                self._maintenance_lease.assert_owner(self.db_path)
+            else:
+                self._runtime_lease = RuntimeLease(self.db_path).acquire()
+        try:
+            await finish_before_cancellation(self._connect())
+        except BaseException:
+            await self.close()
+            raise
+
+    async def _connect(self) -> None:
         db_file: Path | None = None
         if self.db_path != ":memory:" and not self.db_path.startswith("file:"):
             db_file = Path(self.db_path).expanduser()
@@ -78,9 +96,16 @@ class Database:
 
     async def close(self) -> None:
         """Close database connection."""
+        await finish_before_cancellation(self._close())
+
+    async def _close(self) -> None:
         if self._conn:
             await self._conn.close()
             self._conn = None
+        # On a close failure keep the lease: an old schema handle may survive.
+        if self._runtime_lease is not None:
+            self._runtime_lease.close()
+            self._runtime_lease = None
 
     async def initialize_schema(self) -> None:
         """Create tables from schema.sql if they don't exist, then run migrations."""

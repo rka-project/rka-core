@@ -47,13 +47,13 @@ eligibility. SQLite's ASCII `trim` and raw figure-claims JSON are not substitute
 for that recipe. Invalid composition blocks readiness rather than being treated
 as empty. Global generation scope and optional coverage scopes remain intact.
 
-## E2b: inspect / dry-run and maintenance ownership (in progress)
+## E2b: inspect / dry-run and maintenance ownership (implemented)
 
 E2b1 implements the read-only commands described in
 [the operator guide](../../embedding-inspection.md).
 [The E2b design](2026-09-07-embedding-inspection-maintenance.md) specifies their
-limits and the proposed E2b2 lifetime-admission protocol; that protocol is not
-yet active in API/worker processes.
+limits and the implemented E2b2 lifetime-admission protocol, now active in
+API/worker/database and read-only clients. Native tests gate the final merge.
 
 Build the Core inspection/dry-run service and CLI on these proofs, loading the
 persisted config rather than constructing an unrelated environment-default
@@ -68,7 +68,14 @@ Define lock acquisition order, stop/new-start behavior and recovery after owner
 death. All supported entrypoints must participate; old/uncontrolled processes
 must be rejected or explicitly stopped, not assumed cooperative.
 
-## E2c: offline rebuild / resume (after E2b)
+## E2c: offline rebuild / resume (implemented)
+
+The CLI now exposes `rebuild`, `resume`, and unfinished-operation `rollback`.
+See [the operator workflow](../../embedding-inspection.md). Verified snapshots,
+durable admission markers and a transaction-coupled kv receipt close the
+DB/config publication crash window. The offline phase queues the existing Core
+worker; actual inference happens after services restart. Recovery never claims
+an index ready merely because schema/config publication succeeded.
 
 Under proven exclusion, create and verify a coherent SQLite backup plus config
 snapshot, persist recovery intent, then change schema/config through one
@@ -82,7 +89,7 @@ same-space selective repair of managed generations, changed document policy,
 query-only changes, multi-project preservation and native Windows/Linux/macOS
 exclusion/recovery. No manual production `DELETE` instructions are a substitute.
 
-## Explicit non-completion claims
+## Historical E2a boundary (superseded only by the deliveries above)
 
 E2a does not add an offline maintenance CLI, backups, a persisted maintenance
 intent, exclusion protocol, cross-dimension recovery or managed-generation hash

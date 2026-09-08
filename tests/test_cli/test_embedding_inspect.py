@@ -330,7 +330,8 @@ async def test_text_output_is_explicit_about_non_execution(db):
     result = await asyncio.to_thread(CliRunner().invoke, main, ["admin", "embedding", "dry-run", "--data-dir", str(Path(db.db_path).parent), "--db", db.db_path])
     assert result.exit_code == 0, result.output
     assert "Advisory action: none" in result.output
-    assert "offline execution is not implemented" in result.output
+    assert "Maintenance ownership not acquired" in result.output
+    assert "explicit offline recovery commands" in result.output
     assert "no provider probe" in result.output
 
 

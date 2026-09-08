@@ -1,7 +1,7 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：PI 已认可复核方向并授权整体设计、开始实施；隔离分支已完成 hook/SPA、S2 文件权限边界、I1/I2 已确认写入缺陷、E1a embedding 资源入口、E1b 主回填生命周期及 E1c pack/旧 CLI 入口统一的实现和本机验收。第六批完整 Core 3536 passed，基础安装 79 passed；E2 离线重建、真实模型 RSS、跨平台及发布门待验收，尚未推送、合并或部署。
+- 状态：S1/S2、I1/I2 已确认缺陷及 E1a/b/c 已由 PR #159 合并。E2a/b1 及本批 E2b2/c、原生推理子进程隔离已实现；本批合并须通过完整 Core、原生跨平台及真实模型资源/中断恢复验收。I3-I7、R1-R3 与正式发布仍是独立后续工作，合并不等于本机部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
@@ -127,8 +127,8 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
   E1c 已移除 pack 的 API 内向量循环与旧项目/force CLI 的独立推理路径，保留
   project scope、CLI 默认 hash 检查，并以 v2 job type 拒绝旧 worker 误执行；
   [第六批验收](2026-09-07-core-backfill-entrypoints-validation.md)。最新完整 Core
-  3536 passed、基础安装 79 passed。完整原生推理隔离、真实 RSS 与 E2 尚未收口，
-  不将这些本机门等同 #158 关闭。
+  3536 passed、基础安装 79 passed（历史第六批结果）。本批补充 spawn 原生推理
+  隔离和真实模型资源/故障验收；#158 关闭以本批最终证据为准，不外推到所有模型。
 - 第一提交补合成旧索引和长文输入回归；随后给所有 embedding 入口统一的有界
   输入策略、批次预算、并发限制、超时和可观测拒绝/截断行为。原始研究文本不改写。
 - 总 token 数之外，还要限制单条长度、批次数及最长序列造成的 padding；按后端
@@ -148,13 +148,15 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 - 2026-09-07 E2a 本机实现与验收通过：[分批设计与边界](../specs/2026-09-07-embedding-index-recovery.md)。
   [施工与验收记录](2026-09-07-core-embedding-recovery-validation.md)。
   第一批统一七类输入/hash、逐行验证、同空间旧索引的保守采用和覆盖率配方；
-  E2b2 生命周期独占、E2c 的备份/离线换维度/resume 仍待施工；只读检查见下方 E2b1。
+  后续 E2b2/c 已实现生命周期独占、备份、离线换维度、resume/rollback，见使用说明。
 - E2b1 已实现 CLI-only `admin embedding inspect` / `dry-run`：
   [使用说明](../../embedding-inspection.md)、
   [边界与 E2b2 独占协议设计](../specs/2026-09-07-embedding-inspection-maintenance.md)、
   [本机完整验收记录](2026-09-07-core-embedding-inspection-validation.md)。
   不调用普通数据库初始化，不读取 env 模型默认值，不加载模型、不写配置、不入队；
-  生命周期租约尚未接入 API/worker，E2b2/E2c 不能标为完成。
+  本批生命周期租约已接入 Database/API/worker、只读连接、备份和独立配置写入；
+  E2c 在独占下保留验证过的 DB/config 备份，事务收据和待恢复记录保证中断恢复。
+  prepared/queued 不是 ready；最终本机与原生平台门须在 PR 合并前通过。
 - 依赖 E1 的输入策略和唯一任务所有权。实现 Core CLI 的状态检查、dry-run、
   受监督离线重建、resume；旧 backfill CLI 委托同一 generation-aware 服务。
   E1c 已完成旧 CLI 的同空间入队委托和 hash compatibility；这不代替本节的
