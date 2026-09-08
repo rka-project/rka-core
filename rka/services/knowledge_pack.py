@@ -105,6 +105,7 @@ _CRITICAL_INTEGRITY_CATEGORIES: frozenset[str] = frozenset(
         "outline_hierarchy_invalid",
         "registered_source_artifact_invalid",
         "source_admission_invalid",
+        "journal_attribution_history_invalid",
     }
 )
 
@@ -133,6 +134,7 @@ _TABLE_CATEGORIES: dict[str, list[str]] = {
         "decisions",
         "missions",
         "journal",
+        "journal_attribution_revisions",
         "checkpoints",
         "interpretation_candidates",
         "interpretation_candidate_hints",
@@ -237,6 +239,7 @@ _INSERT_ORDER = (
     "decision_options",
     "missions",
     "journal",
+    "journal_attribution_revisions",
     "reference_validation_attestations",
     "checkpoints",
     "artifacts",
@@ -337,6 +340,7 @@ _ID_ENTITY_TYPES = {
     "missions": "mission",
     "decisions": "decision",
     "journal": "journal",
+    "journal_attribution_revisions": "journal_attribution_revision",
     "checkpoints": "checkpoint",
     "claims": "claim",
     "claim_scope_versions": "claim_scope",
@@ -404,6 +408,7 @@ _DIRECT_ID_COLUMNS = {
         "pi_selected_option_id",
     ),
     "journal": ("id", "related_mission", "supersedes", "superseded_by"),
+    "journal_attribution_revisions": ("id", "journal_id"),
     "checkpoints": ("id", "mission_id", "linked_decision_id"),
     "claims": ("id", "source_entry_id", "staleness_resolution_journal_id"),
     "claim_scope_versions": (
@@ -720,7 +725,9 @@ _EMBEDDED_ID_RE = re.compile(r"\b[a-z][a-z_]{1,30}_[0-9A-HJKMNP-TV-Z]{16,32}\b")
 # pack-internal lookup values such as artifact file paths, breaking
 # _restore_artifact_files' old-path -> archive mapping.
 _PROSE_TEXT_COLUMNS: dict[str, tuple[str, ...]] = {
-    "journal": ("content", "summary", "verbatim_input"),
+    # Exact originals and correction reasons/snapshots are evidence, not
+    # structured references. Re-keying must never rewrite quoted bytes.
+    "journal": ("content", "summary"),
     "decisions": ("question", "rationale", "chosen", "abandonment_reason", "options"),
     "missions": (
         "objective",
@@ -2630,6 +2637,7 @@ class KnowledgePackService(BaseService):
         "outline_hierarchy_invalid": "critical",
         "registered_source_artifact_invalid": "critical",
         "source_admission_invalid": "critical",
+        "journal_attribution_history_invalid": "critical",
         "claim_count_mismatch": "warning",
     }
 
@@ -2715,6 +2723,42 @@ class KnowledgePackService(BaseService):
         pid = project_id or self.project_id
         issues: list[dict] = []
         issues.extend(await self._outline_hierarchy_integrity_issues(pid))
+
+        invalid_attribution = await self.db.fetchall(
+            """SELECT j.id FROM journal AS j
+               WHERE j.project_id = ? AND (
+                 j.attribution_revision != (
+                   SELECT COUNT(*) FROM journal_attribution_revisions AS r
+                   WHERE r.project_id = j.project_id AND r.journal_id = j.id
+                 ) OR (j.attribution_revision > 0 AND NOT EXISTS (
+                   SELECT 1 FROM journal_attribution_revisions AS head
+                   WHERE head.project_id = j.project_id AND head.journal_id = j.id
+                     AND head.revision = j.attribution_revision
+                     AND head.after_source IS j.source
+                     AND head.after_verbatim_input IS j.verbatim_input
+                     AND head.after_capture_mode IS j.capture_mode
+                 ))
+               )
+               UNION
+               SELECT r.journal_id AS id FROM journal_attribution_revisions AS r
+               WHERE r.project_id = ? AND r.revision > 1 AND NOT EXISTS (
+                 SELECT 1 FROM journal_attribution_revisions AS previous
+                 WHERE previous.project_id = r.project_id AND previous.journal_id = r.journal_id
+                   AND previous.revision = r.expected_revision
+                   AND previous.after_source IS r.before_source
+                   AND previous.after_verbatim_input IS r.before_verbatim_input
+                   AND previous.after_capture_mode IS r.before_capture_mode
+               ) LIMIT 50""",
+            [pid, pid],
+        )
+        if invalid_attribution:
+            issues.append({
+                "category": "journal_attribution_history_invalid", "severity": "critical",
+                "count": len(invalid_attribution),
+                "ids": [row["id"] for row in invalid_attribution[:10]],
+                "description": "Journal attribution revision chain or current head is inconsistent",
+                "fix_action": "Restore attribution and immutable history from a trusted pack",
+            })
 
         source_rows = await self.db.fetchall(
             """SELECT source.*, artifact.content_hash AS artifact_content_hash,

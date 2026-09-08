@@ -148,6 +148,7 @@ async def ingest_with_content(
                 from rka.models.journal import JournalEntryCreate
                 entry_data = JournalEntryCreate(
                     content=data.content,
+                    capture_mode="raw_capture",
                     type=data.proposed_type,
                     source=data.source,
                     phase=data.phase,

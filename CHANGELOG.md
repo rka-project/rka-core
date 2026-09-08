@@ -7,6 +7,26 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- **Journal attribution corrections (unreleased, I3b)**: source/original edits
+  now require a reason, declared actor, attribution revision and request ID via
+  `correct_note_attribution` / `POST /api/notes/{id}/attribution-corrections`.
+  Ordinary REST/MCP/bulk updates reject non-null `source` or `verbatim_input`;
+  content, tags and lifecycle edits are unchanged. Immutable correction history
+  survives default knowledge-pack export/import, stale revisions conflict, and
+  exact retries return the original event. Migration 056 preserves unknown
+  legacy originals as NULL. Quoted originals are no longer re-keyed as prose
+  during pack import. Actor declarations are not authentication. See
+  [the correction contract](docs/JOURNAL_ATTRIBUTION.md) before upgrading.
+
+- **Explicit journal capture modes (unreleased, I3c)**: raw capture preserves
+  exact supplied text separately from mutable content; PI agent restatements
+  require original wording on every explicit-mode creation surface. Markdown
+  imports retain exact source slices before display formatting. Complete local
+  text capture keeps line endings; truncated/extracted/generated previews remain
+  unknown. Migration 057 marks all historical rows/corrections unknown without
+  inferring or backfilling quotations. Mode changes use the same revision-guarded
+  correction history and survive knowledge-pack round trips.
+
 - **Core hardening / backfill entry points (unreleased)**: pack imports now commit
   lexical indexes and durable import receipts atomically with worker-owned vector
   intents. Import status distinguishes lexical/semantic completion. The legacy

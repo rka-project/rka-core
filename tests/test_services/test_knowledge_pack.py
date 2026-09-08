@@ -299,7 +299,7 @@ def test_scope_hash_remap_preserves_intentionally_stale_scope() -> None:
     assert remapped["claim_scope_versions"][0]["claim_content_hash"] == stale_hash
 
 
-def test_remap_rekeys_project_and_entity_ids_in_core_provenance_text() -> None:
+def test_remap_rekeys_prose_references_but_preserves_verbatim_originals() -> None:
     service = KnowledgePackService.__new__(KnowledgePackService)
     source_project = "prj_01M100GW2EVPA8T6Q4CSZ5GPFA"
     target_project = "recovery_pack_001"
@@ -331,8 +331,11 @@ def test_remap_rekeys_project_and_entity_ids_in_core_provenance_text() -> None:
 
     assert mission["checkpoint_triggers"] == f"Review {target_project}"
     assert mission["report"] == f"Evidence is recorded in {target_journal}"
+    assert journal["project_id"] == target_project
+    # A quotation is evidence, not prose owned by the importer. Its embedded
+    # IDs must stay literal even while structured IDs and ordinary prose re-key.
     assert journal["verbatim_input"] == (
-        f"Inspect {target_project} and {target_journal}"
+        f"Inspect {source_project} and {source_journal}"
     )
 
 

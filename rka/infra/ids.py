@@ -9,6 +9,7 @@ _PREFIXES = {
     "decision": "dec",
     "literature": "lit",
     "journal": "jrn",
+    "journal_attribution_revision": "jar",
     "mission": "mis",
     "checkpoint": "chk",
     "event": "evt",

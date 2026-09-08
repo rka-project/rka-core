@@ -3416,8 +3416,190 @@
         ],
         "type": "object"
       },
+      "JournalAttributionCorrection": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi",
+              "llm",
+              "web_ui",
+              "system"
+            ],
+            "type": "string"
+          },
+          "capture_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unknown",
+                  "raw_capture",
+                  "agent_restatement"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "reason": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi",
+              "llm",
+              "web_ui"
+            ],
+            "type": "string"
+          },
+          "verbatim_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "expected_revision",
+          "request_id",
+          "actor",
+          "reason",
+          "source",
+          "verbatim_input"
+        ],
+        "type": "object"
+      },
+      "JournalAttributionRevision": {
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "actor_basis": {
+            "const": "caller_asserted",
+            "type": "string"
+          },
+          "after_capture_mode": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "raw_capture",
+              "agent_restatement"
+            ],
+            "type": "string"
+          },
+          "after_source": {
+            "type": "string"
+          },
+          "after_verbatim_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before_capture_mode": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "raw_capture",
+              "agent_restatement"
+            ],
+            "type": "string"
+          },
+          "before_source": {
+            "type": "string"
+          },
+          "before_verbatim_input": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "expected_revision": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "journal_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "journal_id",
+          "revision",
+          "expected_revision",
+          "request_id",
+          "actor",
+          "actor_basis",
+          "reason",
+          "before_source",
+          "before_verbatim_input",
+          "after_source",
+          "after_verbatim_input",
+          "created_at"
+        ],
+        "type": "object"
+      },
       "JournalEntry": {
         "properties": {
+          "attribution_revision": {
+            "default": 0,
+            "type": "integer"
+          },
+          "capture_mode": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "raw_capture",
+              "agent_restatement"
+            ],
+            "type": "string"
+          },
           "confidence": {
             "type": "string"
           },
@@ -3584,6 +3766,15 @@
       "JournalEntryCreate": {
         "additionalProperties": false,
         "properties": {
+          "capture_mode": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "raw_capture",
+              "agent_restatement"
+            ],
+            "type": "string"
+          },
           "confidence": {
             "default": "hypothesis",
             "enum": [
@@ -3860,7 +4051,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "deprecated": true
           },
           "status": {
             "anyOf": [
@@ -3933,7 +4125,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "deprecated": true
           }
         },
         "type": "object"
@@ -15307,6 +15500,180 @@
         ]
       }
     },
+    "/api/notes/{note_id}/attribution-corrections": {
+      "post": {
+        "operationId": "correct_note_attribution_api_notes__note_id__attribution_corrections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalAttributionCorrection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalAttributionRevision"
+                }
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/notes/{note_id}/attribution-history": {
+      "get": {
+        "operationId": "note_attribution_history_api_notes__note_id__attribution_history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_revision",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/JournalAttributionRevision"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "notes"
+        ]
+      }
+    },
     "/api/projects": {
       "get": {
         "operationId": "list_projects_api_projects_get",
@@ -18347,11 +18714,11 @@
   "x-rka-operation-counts": {
     "core_maturity": {
       "preview": 28,
-      "stable": 138
+      "stable": 140
     },
     "ownership": {
       "agentic-unsupported": 10,
-      "core": 166,
+      "core": 168,
       "core-legacy": 6,
       "writer-compatibility": 53
     }

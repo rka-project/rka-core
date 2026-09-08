@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rka.infra.ids import generate_id
+from rka.models.journal import JournalCaptureMode
 from rka.infra.file_access import FileAccessError, FileAccessPolicy, ScanBudget, MAX_SCAN_FILES
 from rka.models.workspace import (
     BootstrapReview,
@@ -594,8 +595,7 @@ class WorkspaceService:
         phase: str | None, tags: list[str], source: str, scan_id: str,
     ) -> IngestResult:
         """Ingest a text-based file via academic.ingest_document()."""
-        capabilities = self._detect_capabilities(False)
-        content = self._safe_read_text(path, capabilities)
+        content, capture_mode = self._read_journal_text(path)
         if not content:
             return IngestResult(
                 relative_path=scanned.relative_path,
@@ -607,6 +607,7 @@ class WorkspaceService:
 
         result = await self.academic.ingest_document(
             content=content,
+            capture_mode=capture_mode,
             source=source,
             default_type=scanned.proposed_type,
             phase=phase,
@@ -674,6 +675,8 @@ class WorkspaceService:
         """Ingest a single file as one journal entry."""
         from rka.models.journal import JournalEntryCreate
 
+        capture_mode: JournalCaptureMode = "unknown"
+        original = None
         if scanned.category == FileCategory.code:
             content = self._safe_read_text(path)
             if not content:
@@ -698,11 +701,19 @@ class WorkspaceService:
                 f"Format: {scanned.extension}"
             )
         else:
-            content = self._safe_read_text(path)
+            content, capture_mode = self._read_journal_text(path)
             entry_content = content or f"File: {scanned.filename}"
+            if content and content.strip() and capture_mode == "raw_capture":
+                original = content
+            else:
+                capture_mode = "unknown"
 
+        # Code previews and generated file metadata are not verbatim documents.
+        # Only a successfully read, unrendered text body is an explicit capture.
         data = JournalEntryCreate(
             content=entry_content,
+            capture_mode=capture_mode,
+            verbatim_input=original,
             type=scanned.proposed_type,
             source=source,
             phase=phase,
@@ -840,6 +851,25 @@ class WorkspaceService:
     def _hash_file(path: Path, full_hash_limit: int = 10 * 1024 * 1024) -> str:
         """Compute SHA-256 hash of a file."""
         return hash_file(path, full_hash_limit)
+
+    def _read_journal_text(self, path: Path) -> tuple[str | None, JournalCaptureMode]:
+        """Capture complete decoded text without newline conversion.
+
+        Existing extraction/truncation previews are useful content, but are not
+        claimed as originals. Called only after the workspace file-policy check.
+        """
+        if path.suffix.lower() == ".docx":
+            return self._safe_read_text(path, self._detect_capabilities(False)), "unknown"
+        for encoding in ("utf-8", "latin-1"):
+            try:
+                with path.open(encoding=encoding, newline="") as stream:
+                    text = stream.read(200_001)
+                if len(text) > 200_000:
+                    return text[:200_000] + "\n[…truncated]", "unknown"
+                return text, "raw_capture"
+            except (UnicodeDecodeError, PermissionError):
+                continue
+        return None, "unknown"
 
     @staticmethod
     def _safe_read_text(

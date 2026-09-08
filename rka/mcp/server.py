@@ -31,6 +31,7 @@ from rka.mcp._enums import (
     EvidenceStatusLit,
     ImportanceLit,
     IngestSourceLit,
+    JournalCaptureModeLit,
     MissionStatusLit,
     SourceLit,
 )
@@ -786,6 +787,7 @@ async def rka_add_note(
     pinned: bool | None = None,
     *,
     project_id: str,
+    capture_mode: JournalCaptureModeLit = "unknown",
 ) -> str:
     """PRIMARY FIELD: content. Add a research journal entry.
 
@@ -805,6 +807,8 @@ async def rka_add_note(
         summary: Optional short summary of the entry
         status: draft | active | superseded | retracted (defaults to active)
         pinned: Whether to pin the entry for quick access
+        capture_mode: unknown (default), raw_capture, or agent_restatement. Raw creation
+            retains supplied verbatim_input or snapshots content exactly when absent.
     """
     # v2.7.0.7 — summary/status/pinned now forwarded. NoteCreate accepts them
     # but the adapter previously omitted them, so the RecordNoteArgs typed
@@ -819,6 +823,7 @@ async def rka_add_note(
             "confidence": confidence, "importance": importance,
             "tags": tags, "summary": summary, "status": status,
             "pinned": pinned,
+            "capture_mode": capture_mode,
         }
         r = await c.post("/api/notes", json={k: v for k, v in body.items() if v is not None})
         _raise_with_detail(r)
@@ -859,13 +864,13 @@ async def rka_update_note(
         importance: New importance level — critical | high | normal | low
         status: New lifecycle status — draft | active | superseded | retracted
         pinned: Whether the journal entry is pinned
-        verbatim_input: PI's exact words (preserves intellectual attribution)
+        verbatim_input: Deprecated for updates; use rka_correct_note_attribution
         related_decisions: Decision IDs this note relates to
         related_literature: Literature IDs this note references
         related_mission: Mission ID this note belongs to
         tags: Tags for categorization
         phase: Research phase (e.g. planning | development | design | experiment)
-        source: Who created this — brain | executor | pi | llm | web_ui
+        source: Deprecated for updates; use rka_correct_note_attribution
     """
     async with _client(project_id) as c:
         body = {
@@ -883,6 +888,44 @@ async def rka_update_note(
         _raise_with_detail(r)
         changed = list(filtered.keys())
         return f"Updated {id} fields={','.join(changed)}"
+
+
+@tool(category="journal")
+async def rka_correct_note_attribution(
+    id: str, expected_revision: int, request_id: str, actor: str,
+    reason: str, source: str, verbatim_input: str | None, *, project_id: str,
+    capture_mode: JournalCaptureModeLit | None = None,
+) -> str:
+    """Correct source/original with an explicit reason and attribution revision.
+
+    Actor is a caller declaration, not authentication. Exact retries return
+    the original immutable correction, even if later corrections exist.
+    """
+    from rka.models.journal import JournalAttributionCorrection
+
+    data = JournalAttributionCorrection(
+        expected_revision=expected_revision, request_id=request_id, actor=actor,
+        reason=reason, source=source, verbatim_input=verbatim_input,
+        capture_mode=capture_mode,
+    )
+    async with _client(project_id) as c:
+        response = await c.post(f"/api/notes/{id}/attribution-corrections", json=data.model_dump())
+        _raise_with_detail(response)
+        return json.dumps(response.json(), ensure_ascii=False)
+
+
+@tool(category="journal")
+async def rka_get_note_attribution_history(
+    id: str, after_revision: int = 0, limit: int = 50, *, project_id: str,
+) -> str:
+    """Read project-scoped attribution corrections in ascending revision order."""
+    async with _client(project_id) as c:
+        response = await c.get(
+            f"/api/notes/{id}/attribution-history",
+            params={"after_revision": after_revision, "limit": limit},
+        )
+        _raise_with_detail(response)
+        return json.dumps(response.json(), ensure_ascii=False)
 
 
 @tool(category="literature")
@@ -7630,6 +7673,7 @@ from typing import Literal as _Literal
 # window — see rka_query signature).
 QueryScopeLit = _Literal[
     "status", "context", "search", "entity", "journal", "literature",
+    "note_attribution_history",
     "mission", "report", "checkpoints", "decision_tree", "calibration_metrics",
     "hooks", "hook_executions", "brain_notifications", "research_map",
     "review_queue", "clusters", "claims", "interpretation_candidates", "sources",
@@ -8248,6 +8292,7 @@ async def rka_record_note(
     phase: str | None = None,
     tags: list[str] | None = None,
     provenance: dict | None = None,
+    capture_mode: JournalCaptureModeLit = "unknown",
 ) -> str:
     """[BRAIN/EXECUTOR/PI] RECORD a journal entry (note, log, directive).
 
@@ -8260,9 +8305,8 @@ async def rka_record_note(
     field on the underlying POST /api/notes body so existing service-layer
     handlers remain unchanged.
 
-    PI input discipline (Phase-X²-prime polish): when `source='pi'`,
-    `verbatim_input` is REQUIRED — the PI's exact wording is the only
-    intellectual-attribution surface for audit.
+    PI input requires exact verbatim_input, except explicit raw_capture may
+    snapshot supplied content on creation. Omitted mode remains unknown.
 
     Args:
         content: Note body (PRIMARY).
@@ -8271,13 +8315,14 @@ async def rka_record_note(
         type: note | log | directive (legacy types auto-normalised).
         confidence: hypothesis | tested | verified | superseded | retracted.
         importance: critical | high | normal | low | archived.
-        verbatim_input: PI's exact words. REQUIRED when source='pi'.
+        verbatim_input: Exact original; PI source requires it unless raw capture snapshots content.
+        capture_mode: unknown (default), raw_capture, or agent_restatement.
         phase: Research phase override.
         tags: Free-form tag list.
         provenance: Optional dict with related_decisions / related_literature /
             related_mission / supersedes.
     """
-    if source == "pi" and not verbatim_input:
+    if capture_mode != "raw_capture" and source == "pi" and not (verbatim_input or "").strip():
         return json.dumps({
             "error": "rka_record_note(source='pi') requires `verbatim_input` "
                      "(exact PI wording). This is the Phase-X²-prime polish "
@@ -8288,6 +8333,7 @@ async def rka_record_note(
     body = _strip_none({
         "content": content, "type": type, "source": source,
         "phase": phase, "verbatim_input": verbatim_input,
+        "capture_mode": capture_mode,
         "related_decisions": prov.get("related_decisions"),
         "related_literature": prov.get("related_literature"),
         "related_mission": prov.get("related_mission"),
@@ -8634,6 +8680,7 @@ async def rka_session(
 #     so the journal entry has derived_from links to the source paper.
 
 from rka.mcp.verb_dispatch import (
+    _OMITTED_VERBATIM,
     dispatch_record_literature as _dispatch_record_literature,
     dispatch_mission as _dispatch_mission,
     dispatch_checkpoint as _dispatch_checkpoint,
@@ -9347,7 +9394,7 @@ async def _rka_execute_legacy_impl(
     source: SourceLiteral | None = None,
     confidence: ConfidenceLiteral | float | None = None,
     importance: ImportanceLiteral | None = None,
-    verbatim_input: str | None = None,
+    verbatim_input: str | None = _OMITTED_VERBATIM,  # type: ignore[assignment]
     provenance: dict | None = None,
     tags: list[str] | None = None,
     phase: str | None = None,
@@ -9360,6 +9407,7 @@ async def _rka_execute_legacy_impl(
 
     Omitted common fields stay omitted until dispatch chooses the operation's
     defaults; injecting creation defaults here would overwrite existing notes.
+    Preserve absent versus explicit-null original text for attribution corrections.
     """
     return await _dispatch_execute(
         operation,

@@ -1,8 +1,9 @@
 # RKA Core 审计复核与开发计划
 
 - 日期：2026-09-05
-- 状态：S1/S2、I1/I2 已确认缺陷及 E1a/b/c 已由 PR #159 合并。E2a/b1 及本批 E2b2/c、原生推理子进程隔离已实现；本批合并须通过完整 Core、原生跨平台及真实模型资源/中断恢复验收。I3-I7、R1-R3 与正式发布仍是独立后续工作，合并不等于本机部署。
+- 状态（2026-09-08）：S1/S2、I1/I2 已确认缺陷及 E1a/b/c 已由 PR #159 合并；E 系列余项由 PR #160 合并。I3a/b/c 开发与本地验收完成，进入已授权的 commit/PR/CI/合并流程，集成状态以 GitHub PR/提交记录为准，验证见 I3 施工记录。I4-I7、R1-R3 与正式发布仍是后续工作，合并不等于本机部署。
 - 基线：`rka-project/rka-core`，`f8db01b33acc76cfa6f9fff804868c21cd08d58b`。
+- 当前 I3 开发基线：`6dbb0e0f2e9d4caa74732cb1be347a2fd113558b`（#160）；上行保留原审计基线。
 - 请求：重新阅读最新审计报告，并准备接下来的开发计划。
 - 约束：本地优先、研究者控制；测试隔离；保留当前运行环境及其他 worktree。
 - 上位方向：[当前 roadmap](../../../ROADMAP.md)、[2026-09-03 执行计划](2026-09-03-rka-ecosystem-active-roadmap.md)、ADR 0012、0013、0016、0017、0018。
@@ -193,6 +194,16 @@ E5 完成前不把现有 main 当作已验证发布产物交给 App 或公开 De
 
 **I3 — Journal 归属修正与审计**
 
+- 2026-09-08 I3a 已在隔离分支实现更新审计基座（执行者声明、前后值、tags-only
+  留痕、事务回滚与并发回读）；[施工边界与验证](2026-09-08-core-journal-audit-foundation.md)。
+  尚未合并；不将本批审计增强视为 I3 完成。
+- I3b 已在同一隔离分支实现理由/revision/精确重试修正、不可变历史、普通更新绕路
+  封堵及默认 pack 往返；[修正契约](../../JOURNAL_ATTRIBUTION.md)。验证记录见
+  [I3b 施工记录](2026-09-08-core-journal-attribution-corrections.md)。
+- I3c 已实现显式原文采集/agent 转述/未知模式、迁移 057、采集模式修正历史、
+  原文切片保存及入口对齐；[I3c 施工与恢复记录](2026-09-08-core-journal-capture.md)。
+  I3a/b/c 均在持久化隔离 worktree 中，完整验收结果见该记录；集成状态见 GitHub
+  PR/提交历史。新增 I3 专项 CI 覆盖六组平台/Python 组合；本轮不部署。
 - 先明确 asserted author/source、执行此次修改的 actor、原文/转述的区别。
 - 普通更新不得无审计改写 source/verbatim；需要修正时保留前值、后值、执行者、
   理由和 revision，冲突更新拒绝或显式重试。来源归属不能靠伪造 HTTP header 验真。

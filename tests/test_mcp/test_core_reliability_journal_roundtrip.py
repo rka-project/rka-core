@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import httpx
 import pytest
@@ -11,8 +12,102 @@ from pydantic import ValidationError
 
 from rka.api.app import create_app
 from rka.config import RKAConfig
-from rka.mcp.operation_args import BulkUpdateArgs, RecordNoteArgs, UpdateNoteArgs
-from rka.mcp.verb_dispatch import dispatch_execute_typed
+from rka.mcp.operation_args import (
+    BulkUpdateArgs, CorrectNoteAttributionArgs, QueryEntityArgs, QueryNoteAttributionHistoryArgs,
+    IngestDocumentArgs, RecordNoteArgs, UpdateNoteArgs,
+)
+from rka.mcp.verb_dispatch import dispatch_execute, dispatch_execute_typed, dispatch_query_typed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["rest", "typed", "legacy", "raw_dispatch", "legacy_record", "batch"])
+async def test_raw_capture_roundtrip_on_all_create_surfaces(mcp_env, surface):
+    import rka.mcp.server as server
+
+    original = "  PI 原文\r\n"
+    data = {"content": original, "source": "pi", "capture_mode": "raw_capture"}
+    headers = {"X-RKA-Project": "proj_default"}
+    if surface == "rest":
+        result = await mcp_env.post("/api/notes", json=data, headers=headers)
+        assert result.status_code == 201, result.text
+    elif surface == "typed":
+        assert "Created" in await dispatch_execute_typed(RecordNoteArgs(project_id="proj_default", **data))
+    elif surface == "legacy":
+        assert "Created" in await server.rka_add_note(project_id="proj_default", **data)
+    elif surface == "legacy_record":
+        assert "Created" in await server.rka_record_note(project_id="proj_default", **data)
+    elif surface == "batch":
+        result = await mcp_env.post("/api/import/batch", headers=headers,
+                                   json={"entries": [{"entity_type": "note", "data": data}]})
+        assert result.status_code == 200, result.text
+    else:
+        assert "Created" in await dispatch_execute("record_note", project_id="proj_default", **data)
+    result = await mcp_env.get("/api/notes", headers=headers)
+    note, = result.json()
+    assert note["verbatim_input"] == original and note["capture_mode"] == "raw_capture"
+    updated = await mcp_env.put(f"/api/notes/{note['id']}", headers=headers, json={"content": "Edited"})
+    assert updated.json()["verbatim_input"] == original
+    rejected = await mcp_env.put(f"/api/notes/{note['id']}", headers=headers,
+                                 json={"capture_mode": "unknown"})
+    assert rejected.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_typed_document_ingest_pi_raw_capture_and_mode_correction(mcp_env):
+    raw = "## Heading\r\n  exact PI text  \n"
+    await dispatch_execute_typed(IngestDocumentArgs(project_id="proj_default", content=raw, source="pi"))
+    headers = {"X-RKA-Project": "proj_default"}
+    note, = (await mcp_env.get("/api/notes", headers=headers)).json()
+    assert note["capture_mode"] == "raw_capture" and note["verbatim_input"] == raw
+    args = CorrectNoteAttributionArgs(
+        project_id="proj_default", id=note["id"], source="pi", verbatim_input=raw,
+        capture_mode="agent_restatement", expected_revision=0, request_id="mode-1", actor="executor",
+        reason="Correct the declared capture method",
+    )
+    first = json.loads(await dispatch_execute_typed(args))
+    assert first["before_capture_mode"] == "raw_capture"
+    assert first["after_capture_mode"] == "agent_restatement"
+    assert json.loads(await dispatch_execute_typed(args)) == first
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["rest", "typed", "legacy", "raw_dispatch", "legacy_record", "batch"])
+async def test_pi_restatement_without_original_is_rejected_on_all_surfaces(mcp_env, surface):
+    from rka.mcp import server
+
+    data = {"content": "Agent paraphrase", "source": "pi", "capture_mode": "agent_restatement"}
+    headers = {"X-RKA-Project": "proj_default"}
+    if surface == "rest":
+        result = await mcp_env.post("/api/notes", json=data, headers=headers)
+        assert result.status_code == 422
+    elif surface == "typed":
+        with pytest.raises(ValidationError, match="verbatim_input"):
+            RecordNoteArgs(project_id="proj_default", **data)
+    elif surface == "legacy":
+        with pytest.raises(Exception, match="API error 422"):
+            await server.rka_add_note(project_id="proj_default", **data)
+    elif surface == "legacy_record":
+        assert "error" in json.loads(await server.rka_record_note(project_id="proj_default", **data))
+    elif surface == "batch":
+        result = await mcp_env.post("/api/import/batch", headers=headers,
+                                   json={"entries": [{"entity_type": "note", "data": data}]})
+        assert result.json()["errors"] and result.json()["imported"] == []
+    else:
+        result = await dispatch_execute("record_note", project_id="proj_default", **data)
+        assert json.loads(result)["error"] == "missing_provenance"
+    assert (await mcp_env.get("/api/notes", headers=headers)).json() == []
+
+
+@pytest.mark.asyncio
+async def test_raw_update_dispatch_does_not_silently_drop_capture_mode(mcp_env):
+    headers = {"X-RKA-Project": "proj_default"}
+    response = await mcp_env.post("/api/notes", headers=headers, json={"content": "Keep body"})
+    assert response.status_code == 201, response.text
+    note = response.json()
+    result = await dispatch_execute("update_note", project_id="proj_default", id=note["id"],
+                                    capture_mode="raw_capture", content="Must not write")
+    assert json.loads(result)["error"] == "invalid_attribution"
+    assert (await mcp_env.get(f"/api/notes/{note['id']}", headers=headers)).json()["content"] == "Keep body"
 
 
 @pytest_asyncio.fixture
@@ -44,6 +139,187 @@ async def mcp_env(tmp_path: Path, monkeypatch):
             base_url="http://testserver",
         ) as rest:
             yield rest
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["rest", "typed", "legacy", "bulk"])
+async def test_journal_update_audit_is_readable_after_every_public_path(mcp_env, surface):
+    import rka.mcp.server as mcp_server
+
+    headers = {"X-RKA-Project": "proj_default"}
+    created = await mcp_env.post(
+        "/api/notes", headers=headers,
+        json={"content": "Synthetic original", "source": "brain", "tags": ["before"]},
+    )
+    assert created.status_code == 201, created.text
+    note_id = created.json()["id"]
+    data = {"content": "Synthetic revision", "tags": ["after"]}
+    if surface == "rest":
+        response = await mcp_env.put(
+            f"/api/notes/{note_id}", json=data,
+            headers={**headers, "X-RKA-Actor": "pi"},
+        )
+        assert response.status_code == 200, response.text
+    elif surface == "typed":
+        result = await dispatch_execute_typed(UpdateNoteArgs(
+            operation="update_note", project_id="proj_default", id=note_id, **data,
+        ))
+        assert "Updated" in result
+    elif surface == "legacy":
+        result = await mcp_server.rka_update_note(id=note_id, project_id="proj_default", **data)
+        assert "Updated" in result
+    else:
+        result = await dispatch_execute_typed(BulkUpdateArgs(
+            operation="bulk_update", project_id="proj_default",
+            updates=[{"entity_type": "journal", "id": note_id, **data}],
+        ))
+        assert result.startswith("Updated 1/1")
+    audit = await mcp_env.get(
+        "/api/audit", headers=headers,
+        params={"entity_type": "journal", "entity_id": note_id, "action": "update"},
+    )
+    assert audit.status_code == 200, audit.text
+    row, = audit.json()
+    assert row["details"]["before"] == {"content": "Synthetic original", "tags": ["before"]}
+    assert row["details"]["after"] == data
+    # This batch does not invent an authenticated actor from source or headers.
+    assert row["actor"] == "system"
+    assert row["details"]["actor_basis"] == "legacy_default"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["rest", "typed", "legacy"])
+async def test_attribution_correction_round_trip_and_conflict(mcp_env, surface):
+    import rka.mcp.server as mcp_server
+
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", headers=headers, json={"content": "Synthetic"})).json()
+    note_id = note["id"]
+    assert note["attribution_revision"] == 0
+    entity = json.loads(await dispatch_query_typed(QueryEntityArgs(
+        project_id="proj_default", id=note_id,
+    )))
+    assert entity["attribution_revision"] == 0
+    body = {"expected_revision": 0, "request_id": "public-1", "actor": "executor",
+            "reason": "Correct source", "source": "pi", "verbatim_input": "Exact synthetic original"}
+
+    async def call(data):
+        if surface == "rest":
+            response = await mcp_env.post(f"/api/notes/{note_id}/attribution-corrections", headers=headers, json=data)
+            response.raise_for_status()
+            return response.json()
+        if surface == "typed":
+            return json.loads(await dispatch_execute_typed(CorrectNoteAttributionArgs(
+                project_id="proj_default", id=note_id, **data,
+            )))
+        return json.loads(await mcp_server.rka_correct_note_attribution(
+            project_id="proj_default", id=note_id, **data,
+        ))
+
+    first = await call(body)
+    assert first["revision"] == 1 and first["actor_basis"] == "caller_asserted"
+    assert first["before_verbatim_input"] is None
+    assert await call(body) == first
+    if surface == "rest":
+        with pytest.raises(httpx.HTTPStatusError) as error:
+            await call({**body, "request_id": "stale"})
+        assert error.value.response.status_code == 409
+    else:
+        # Existing MCP adapters render API detail as an ordinary Exception.
+        with pytest.raises(Exception, match="API error 409: attribution revision conflict"):
+            await call({**body, "request_id": "stale"})
+    second = await call({**body, "expected_revision": 1, "request_id": "public-2",
+                         "source": "brain", "verbatim_input": None})
+    assert second["revision"] == 2 and second["after_verbatim_input"] is None
+    assert await call(body) == first
+    history = json.loads(await dispatch_query_typed(QueryNoteAttributionHistoryArgs(
+        project_id="proj_default", id=note_id, after_revision=1,
+    )))
+    assert history == [second]
+    note = (await mcp_env.get(f"/api/notes/{note_id}", headers=headers)).json()
+    assert note["attribution_revision"] == 2 and note["source"] == "brain"
+    assert note["verbatim_input"] is None
+    entity = json.loads(await dispatch_query_typed(QueryEntityArgs(
+        project_id="proj_default", id=note_id,
+    )))
+    assert entity["attribution_revision"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["rest", "typed", "legacy", "bulk", "legacy_bulk"])
+async def test_public_updates_cannot_bypass_attribution_correction(mcp_env, surface):
+    import rka.mcp.server as mcp_server
+
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", headers=headers, json={"content": "Synthetic"})).json()
+    data = {"source": "pi", "verbatim_input": "Forged assertion", "content": "Must not be written"}
+    if surface == "rest":
+        response = await mcp_env.put(f"/api/notes/{note['id']}", headers=headers, json=data)
+        assert response.status_code == 422
+    elif surface == "typed":
+        with pytest.raises(ValidationError, match="correct_note_attribution"):
+            UpdateNoteArgs(project_id="proj_default", id=note["id"], **data)
+    elif surface == "legacy":
+        with pytest.raises(Exception, match="API error 422:.*correct_note_attribution"):
+            await mcp_server.rka_update_note(id=note["id"], project_id="proj_default", **data)
+    else:
+        updates = [
+            {"entity_type": "journal", "id": note["id"], "content": "Would be partial"},
+            {"entity_type": "journal", "id": note["id"], **data},
+        ]
+        if surface == "bulk":
+            with pytest.raises(ValidationError, match="correct_note_attribution"):
+                BulkUpdateArgs(project_id="proj_default", updates=updates)
+        else:
+            result = await mcp_server.rka_bulk_update(project_id="proj_default", updates=updates)
+            assert "correct_note_attribution" in result
+    readback = (await mcp_env.get(f"/api/notes/{note['id']}", headers=headers)).json()
+    assert readback == note
+
+
+@pytest.mark.asyncio
+async def test_history_and_correction_reject_wrong_project_and_bad_requests(mcp_env):
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", headers=headers, json={"content": "Synthetic"})).json()
+    body = {"expected_revision": 0, "request_id": "public-1", "actor": "executor",
+            "reason": "Correction", "source": "brain", "verbatim_input": None}
+    for key in body:
+        missing = {k: v for k, v in body.items() if k != key}
+        result = await mcp_env.post(f"/api/notes/{note['id']}/attribution-corrections", headers=headers, json=missing)
+        assert result.status_code == 422, key
+    assert (await mcp_env.get(f"/api/notes/{note['id']}/attribution-history", headers=headers, params={"limit": 201})).status_code == 422
+    project = await mcp_env.post("/api/projects", json={"name": "Unrelated synthetic project"})
+    assert project.status_code == 200, project.text
+    outsider = {"X-RKA-Project": project.json()["id"]}
+    assert (await mcp_env.get(f"/api/notes/{note['id']}/attribution-history", headers=outsider)).status_code == 404
+    assert (await mcp_env.post(f"/api/notes/{note['id']}/attribution-corrections", headers=outsider, json=body)).status_code == 404
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["dispatcher", "legacy_wrapper"])
+async def test_raw_dispatch_requires_explicit_nullable_original(mcp_env, surface):
+    from rka.mcp.server import _rka_execute_legacy_impl
+
+    invoke = dispatch_execute if surface == "dispatcher" else _rka_execute_legacy_impl
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", headers=headers, json={
+        "content": "Synthetic", "verbatim_input": "Existing original",
+    })).json()
+    data = {"expected_revision": 0, "request_id": "raw-1", "actor": "executor",
+            "reason": "Correct source and remove wrongly attributed original", "source": "brain"}
+    missing = json.loads(await invoke(
+        "correct_note_attribution", project_id="proj_default", id=note["id"], **data,
+    ))
+    assert missing["error"] == "missing_field"
+    assert "verbatim_input" in missing["message"]
+    readback = (await mcp_env.get(f"/api/notes/{note['id']}", headers=headers)).json()
+    assert readback == note
+    corrected = json.loads(await invoke(
+        "correct_note_attribution", project_id="proj_default", id=note["id"],
+        verbatim_input=None, **data,
+    ))
+    assert corrected["before_verbatim_input"] == "Existing original"
+    assert corrected["after_verbatim_input"] is None
 
 
 @pytest.mark.asyncio

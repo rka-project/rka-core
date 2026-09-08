@@ -22,6 +22,29 @@ from rka.services.workspace import WorkspaceService
 # ---- Fixtures ----
 
 
+def test_journal_capture_reader_keeps_crlf_and_marks_truncated_text(ws_svc, tmp_path):
+    path = tmp_path / "capture.txt"
+    path.write_bytes("  原文\r\n".encode("utf-8"))
+    assert ws_svc._read_journal_text(path) == ("  原文\r\n", "raw_capture")
+    path.write_bytes(b"x" * 200_001)
+    content, mode = ws_svc._read_journal_text(path)
+    assert mode == "unknown" and content.endswith("[…truncated]")
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_text_captures_original_but_generated_previews_stay_unknown(services, workspace):
+    ws, notes, *_ = services
+    manifest = await ws.scan(workspace, use_llm=False)
+    result = await ws.ingest(WorkspaceIngestRequest(manifest=manifest, source="pi"))
+    assert result is not None
+    entries = await notes.list(limit=200)
+    captured = [entry for entry in entries if entry.capture_mode == "raw_capture"]
+    assert captured and all(entry.verbatim_input for entry in captured)
+    generated = [entry for entry in entries if entry.content.startswith(("**Code:", "**Data file:"))]
+    assert generated and all(entry.capture_mode == "unknown" and entry.verbatim_input is None
+                             for entry in generated)
+
+
 @pytest_asyncio.fixture
 async def services(db: Database, tmp_path):
     """Build the full service stack needed by WorkspaceService."""

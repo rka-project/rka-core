@@ -547,6 +547,8 @@ async def dispatch_review(target: str, *, project_id: str, payload: dict[str, An
     p = payload or {}
 
     if target == "note_update":
+        if "capture_mode" in p:
+            return _err("invalid_attribution", "capture_mode requires correct_note_attribution")
         if not p.get("id"):
             return _err("missing_field", "review note_update requires payload.id")
         return await _legacy("rka_update_note")(
@@ -910,6 +912,7 @@ _QUERY_DISPATCH: dict[str, str] = {
     "claim_scope": "rka_get_claim_scope",
     "interpretation_candidates": "rka_get_interpretation_candidates",
     "sources": "rka_get_sources",
+    "note_attribution_history": "rka_get_note_attribution_history",
     "experiments": "rka_get_experiments",
     "experiment_runs": "rka_get_experiment_runs",
     "experiment_observations": "rka_get_experiment_observations",
@@ -1227,6 +1230,12 @@ async def dispatch_query(
             source_kind=f.get("source_kind"),
             ownership_kind=f.get("ownership_kind"),
             limit=limit or f.get("limit", 50),
+            project_id=project_id,
+        )
+
+    if scope == "note_attribution_history":
+        return await legacy(
+            id=id, after_revision=f.get("after_revision", 0), limit=limit or 50,
             project_id=project_id,
         )
 
@@ -1602,6 +1611,7 @@ async def dispatch_record_note(
     summary: str | None = None,
     status: str | None = None,
     pinned: bool | None = None,
+    capture_mode: str = "unknown",
 ) -> str:
     """[ANY] Record a journal entry (create or ingest_document).
 
@@ -1610,16 +1620,17 @@ async def dispatch_record_note(
       - 'ingest_document': POST /api/ingest/document — markdown
         splitter; many entries from one call.
 
-    Phase-X²' enforcement: source='pi' requires verbatim_input. The
-    REST layer accepts the call without it, but the v2.7.0 verb tier
-    rejects pre-flight so PI provenance isn't silently lost.
+    PI note creation requires an original unless explicit raw_capture snapshots
+    supplied content. Document ingestion already carries the source text and
+    preserves exact slices before formatting; no duplicate quote is required.
 
     Provenance: Graft A — pass `provenance={related_decisions:[...],
     related_literature:[...], related_mission:..., supersedes:...}`
     OR the same fields as explicit kwargs.
     """
     # Phase-X²' validation: source='pi' must carry verbatim_input.
-    if source == "pi" and not verbatim_input:
+    if (action == "create" and capture_mode != "raw_capture"
+            and source == "pi" and not (verbatim_input or "").strip()):
         return _err(
             "missing_provenance",
             "rka_record_note(source='pi'): verbatim_input is required "
@@ -1680,6 +1691,7 @@ async def dispatch_record_note(
         summary=summary,
         status=status,
         pinned=pinned,
+        capture_mode=capture_mode,
         project_id=project_id,
     )
 
@@ -2077,6 +2089,7 @@ EXECUTE_OPERATIONS = (
     "generate_lm_studio_semantic_patch",
     # update
     "update_note",
+    "correct_note_attribution",
     "update_decision",
     "update_literature",
     "update_status",
@@ -2153,6 +2166,8 @@ _IDENTITY_SENSITIVE_UPDATES = frozenset({
     "bulk_update",
 })
 
+_OMITTED_VERBATIM = object()
+
 
 async def dispatch_execute(
     operation: str,
@@ -2161,7 +2176,7 @@ async def dispatch_execute(
     source: str | None = None,
     confidence: str | float | None = None,
     importance: str | None = None,
-    verbatim_input: str | None = None,
+    verbatim_input: str | None = _OMITTED_VERBATIM,  # type: ignore[assignment]
     provenance: dict[str, Any] | None = None,
     tags: list[str] | None = None,
     phase: str | None = None,
@@ -2196,6 +2211,9 @@ async def dispatch_execute(
       - create_project, reset_session → dispatch_session
     """
     op = operation
+    supplied_verbatim = verbatim_input is not _OMITTED_VERBATIM
+    if not supplied_verbatim:
+        verbatim_input = None
     supplied_identity_fields = {
         key for key, value in (
             ("source", source), ("confidence", confidence), ("importance", importance)
@@ -2223,6 +2241,19 @@ async def dispatch_execute(
             f"rka_execute(operation={op!r}) requires project_id "
             "(every project-scoped write needs explicit project pinning "
             "in v2.6+).",
+        )
+
+    if op == "correct_note_attribution":
+        if "source" not in supplied_identity_fields:
+            return _err("missing_field", "correct_note_attribution requires explicit source")
+        if not supplied_verbatim:
+            return _err("missing_field", "correct_note_attribution requires explicit verbatim_input (nullable)")
+        return await _legacy("rka_correct_note_attribution")(
+            id=kw.get("id"), expected_revision=kw.get("expected_revision"),
+            request_id=kw.get("request_id"), actor=kw.get("actor"),
+            reason=kw.get("reason"), source=source, verbatim_input=verbatim_input,
+            capture_mode=kw.get("capture_mode"),
+            project_id=project_id,
         )
 
     # --- canonical native manuscript aggregate ---
@@ -2622,6 +2653,7 @@ async def dispatch_execute(
             summary=kw.get("summary"),
             status=kw.get("status"),
             pinned=kw.get("pinned"),
+            capture_mode=kw.get("capture_mode", "unknown"),
         )
 
     # --- record_decision (also handles supersede_decision in record form) ---
@@ -3164,6 +3196,8 @@ async def dispatch_query_typed(args: "BaseModel") -> str:  # type: ignore[name-d
     kw_all.pop("project_id", None)
 
     typed_filters = dict(kw_all.get("filters") or {})
+    if op == "note_attribution_history":
+        typed_filters["after_revision"] = kw_all["after_revision"]
     if op == "semantic_patch_proposals" and "status" in kw_all:
         typed_filters["status"] = kw_all["status"]
 
@@ -3210,7 +3244,7 @@ async def dispatch_execute_typed(args: "BaseModel") -> str:  # type: ignore[name
     # ``model_dump`` returns a plain dict; ``exclude_none=True`` strips
     # None defaults so downstream ``kw.get(...)`` calls behave the same
     # as the legacy raw-kwarg surface.
-    if op in {"update_manuscript", "prepare_manuscript_outline_proposal"}:
+    if op in {"update_manuscript", "prepare_manuscript_outline_proposal", "correct_note_attribution"}:
         # Preserve explicit nulls for nullable metadata fields (abstract,
         # venue, workspace_ref) and outline-patch fields (parent, transition,
         # quick-reader role, blocker) while retaining omission semantics.

@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from rka.models.journal import JournalEntry, JournalEntryCreate, JournalEntryUpdate
-from rka.services.notes import NoteService
+from rka.models.journal import (
+    JournalAttributionCorrection, JournalAttributionRevision,
+    JournalEntry, JournalEntryCreate, JournalEntryUpdate,
+)
+from rka.services.notes import (
+    JournalAttributionConflict, JournalAttributionError, NoteNotFoundError, NoteService,
+)
 from rka.api.deps import get_scoped_note_service
 
 router = APIRouter()
@@ -58,4 +63,38 @@ async def update_note(
     entry = await svc.get(note_id)
     if entry is None:
         raise HTTPException(404, f"Note {note_id} not found")
-    return await svc.update(note_id, data)
+    try:
+        return await svc.update(note_id, data)
+    except JournalAttributionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except NoteNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/notes/{note_id}/attribution-corrections", response_model=JournalAttributionRevision)
+async def correct_note_attribution(
+    note_id: str,
+    data: JournalAttributionCorrection,
+    svc: NoteService = Depends(get_scoped_note_service),
+):
+    try:
+        return await svc.correct_attribution(note_id, data)
+    except NoteNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except JournalAttributionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except JournalAttributionError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/notes/{note_id}/attribution-history", response_model=list[JournalAttributionRevision])
+async def note_attribution_history(
+    note_id: str,
+    after_revision: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    svc: NoteService = Depends(get_scoped_note_service),
+):
+    try:
+        return await svc.attribution_history(note_id, after_revision=after_revision, limit=limit)
+    except NoteNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
