@@ -63,6 +63,7 @@ class RuntimeLease:
         self.maintenance = maintenance
         self.fd: int | None = None
         self.pid = os.getpid()
+        self._connections = 0
 
     @property
     def intent_path(self) -> Path:
@@ -123,7 +124,18 @@ class RuntimeLease:
         if not self.maintenance or self.fd is None or self.pid != os.getpid() or self.path != canonical_path(path):
             raise MaintenanceBusy("maintenance ownership required")
 
+    def retain_connection(self, path):
+        self.assert_owner(path)
+        self._connections += 1
+
+    def release_connection(self):
+        if self._connections < 1:
+            raise RuntimeError("unbalanced maintenance connection release")
+        self._connections -= 1
+
     def close(self):
+        if self._connections:
+            raise MaintenanceBusy("maintenance still owns open database connections; close them before releasing admission")
         if self.fd is not None:
             if self.pid != os.getpid():
                 raise RuntimeError("inherited leases cannot be released by child processes")

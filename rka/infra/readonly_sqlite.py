@@ -81,7 +81,7 @@ async def readonly_sqlite(path: Path, *, timeout_seconds: float = 30, maintenanc
     lease = None
     connection = None
     if maintenance_lease is not None:
-        maintenance_lease.assert_owner(source)
+        maintenance_lease.retain_connection(source)
     else:
         lease = RuntimeLease(source).acquire()
     async def open_connection():
@@ -112,4 +112,6 @@ async def readonly_sqlite(path: Path, *, timeout_seconds: float = 30, maintenanc
                 await connection.close()
             if lease is not None:
                 lease.close()
+            if maintenance_lease is not None:
+                maintenance_lease.release_connection()
         await finish_before_cancellation(close_connection())

@@ -94,6 +94,14 @@ unembedded/preserved; the other **3612** rows are within the final native ceilin
    `2c922f97b2f6620d8d2bc32364104db206fd321cbd6e6d5476a60ebd8414f59c`.
    The poison row remains intact and explicitly pending/failed; the global index
    is not falsely labeled ready. Finite retry/exhaustion is covered separately.
+5. Repeated the entire Nomic corpus from an immutable archive of `465cd8c` with
+   the final native ceilings and pipe watchdog, network disabled, fresh synthetic
+   DB and cached public model: **3612** valid rows, **758.18 s**, sampled process-tree
+   RSS peak **1,169,592,320 bytes**, cgroup peak **1,114,886,144 bytes**, all OOM
+   counters zero, API peak **116,310,016 bytes** and HTTP 200. The later connection
+   lifecycle follow-ups do not change provider/budget/document code. The single
+   poison row is explicitly rejected at 2048 bytes. This supersedes relying only
+   on the earlier full-corpus run's looser admission configuration.
 
 ## Failed runs and corrections
 
@@ -102,6 +110,10 @@ unembedded/preserved; the other **3612** rows are within the final native ceilin
 - Final adversarial close-order review reproduced close racing with an in-flight
   connect, which could release admission early. A per-instance lifecycle lock
   now serializes connect/close; regressions also reject concurrent duplicate open.
+- Maintenance-owned connections retain a counted reference too: simulated close
+  failure now prevents even the maintenance gate's context exit from unlocking
+  a still-open schema handle. This extends the same fail-closed rule to inspection
+  connections used inside maintenance, not only ordinary runtime slots.
 - First disposable API used the dependency image's `/app` working directory and
   accidentally imported old source. Stopped only those test containers, retained
   their volume, and reran on a new volume with `/work` and verified module path.

@@ -38,6 +38,7 @@ class Database:
         self._lifecycle_lock = asyncio.Lock()
         self._runtime_lease: RuntimeLease | None = None
         self._maintenance_lease = maintenance_lease
+        self._maintenance_registered = False
 
     async def connect(self) -> None:
         """Open database connection and apply PRAGMAs."""
@@ -50,7 +51,8 @@ class Database:
         if self.db_path != ":memory:":
             self.db_path = str(canonical_path(self.db_path))
             if self._maintenance_lease is not None:
-                self._maintenance_lease.assert_owner(self.db_path)
+                self._maintenance_lease.retain_connection(self.db_path)
+                self._maintenance_registered = True
             else:
                 self._runtime_lease = RuntimeLease(self.db_path).acquire()
         try:
@@ -115,6 +117,9 @@ class Database:
         if self._runtime_lease is not None:
             self._runtime_lease.close()
             self._runtime_lease = None
+        if self._maintenance_registered:
+            self._maintenance_lease.release_connection()
+            self._maintenance_registered = False
 
     async def initialize_schema(self) -> None:
         """Create tables from schema.sql if they don't exist, then run migrations."""

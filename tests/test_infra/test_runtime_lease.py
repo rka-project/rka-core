@@ -242,3 +242,26 @@ async def test_concurrent_connect_does_not_replace_a_live_connection(tmp_path):
         await db.close()
     with RuntimeLease(path, maintenance=True):
         pass
+
+
+@pytest.mark.asyncio
+async def test_maintenance_gate_survives_failed_connection_close(tmp_path, monkeypatch):
+    path = tmp_path / "db.sqlite"
+    lease = RuntimeLease(path, maintenance=True).acquire()
+    db = Database(str(path), maintenance_lease=lease)
+    await db.connect()
+    original = db._conn.close
+    async def fail():
+        raise OSError("injected maintenance close failure")
+    monkeypatch.setattr(db._conn, "close", fail)
+    try:
+        with pytest.raises(OSError):
+            await db.close()
+        with pytest.raises(MaintenanceBusy):
+            lease.close()
+        with pytest.raises(MaintenanceBusy):
+            RuntimeLease(path, maintenance=True).acquire().close()
+    finally:
+        monkeypatch.setattr(db._conn, "close", original)
+        await db.close()
+        lease.close()
