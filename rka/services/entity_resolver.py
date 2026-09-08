@@ -319,6 +319,12 @@ def _currentness(record: Mapping[str, Any], *, as_of: datetime) -> dict[str, Any
         elif staleness == "yellow":
             warnings.append("staleness:yellow")
 
+    verdict = str(record.get("staleness_verdict") or "").strip().lower()
+    if verdict in _INACTIVE_DISPOSITIONS:
+        reasons.append(f"staleness_verdict:{verdict}")
+    elif verdict and verdict not in {"current", "dismissed"}:
+        reasons.append(f"invalid_staleness_verdict:{verdict}")
+
     valid_from_raw = record.get("valid_from")
     if valid_from_raw:
         valid_from = _parse_timestamp(valid_from_raw)

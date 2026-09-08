@@ -2399,6 +2399,11 @@ def _currency_marker(hit: dict) -> str:
         return f"  ⚠ {status.upper()}"
     if hit.get("stale"):
         return "  ⚠ STALE"
+    currency = hit.get("currentness") or {}
+    if currency.get("is_current") is False:
+        return "  ⚠ NOT CURRENT: " + ", ".join(currency.get("reasons", []))
+    if currency.get("warnings"):
+        return "  ⚠ REVIEW: " + ", ".join(currency["warnings"])
     return ""
 
 
@@ -4305,7 +4310,7 @@ async def rka_list_clusters(
         rq = cl.get("research_question_id") or "unassigned"
         lines.append(
             f"  [{conf}] {cl['id']} — {cl['label']} "
-            f"({cl.get('claim_count', 0)} claims)"
+            f"({cl.get('claim_count', 0)} claims){_currency_marker(cl)}"
         )
         lines.append(f"    RQ: {rq}")
         synthesis = cl.get("synthesis") or ""
@@ -4355,7 +4360,7 @@ async def rka_get_research_map(*, project_id: str) -> str:
             )
             lines.append(
                 f"  {connector} [{cl.get('confidence', '?')}, {staleness_icon}] {cl['label']} "
-                f"({cl.get('claim_count', 0)} claims) — {cl['id']}"
+                f"({cl.get('claim_count', 0)} claims) — {cl['id']}{_currency_marker(cl)}"
             )
         if len(clusters) > max_shown:
             lines.append(f"  └─ ... ({len(clusters) - max_shown} more)")
@@ -4364,7 +4369,7 @@ async def rka_get_research_map(*, project_id: str) -> str:
         lines.append(f"\nUnassigned clusters: {len(unassigned)}")
         for uc in unassigned[:5]:
             lines.append(f"  - [{uc.get('confidence', '?')}] {uc['label']} "
-                         f"({uc.get('claim_count', 0)} claims) — {uc['id']}")
+                         f"({uc.get('claim_count', 0)} claims) — {uc['id']}{_currency_marker(uc)}")
         if len(unassigned) > 5:
             lines.append(f"  ... ({len(unassigned) - 5} more)")
     return "\n".join(lines)
@@ -4424,7 +4429,7 @@ async def rka_get_claims(
             else "no" if contradiction_state is False
             else "unknown"
         )
-        s = " [STALE]" if cl.get("stale") else ""
+        s = " [STALE]" if cl.get("stale") else _currency_marker(cl)
         lines.append(
             f"  [{cl['id']}] ({cl['claim_type']}) "
             f"grounded={v} evidence={evidence} contradicted={contradicted} "
@@ -6781,6 +6786,30 @@ async def rka_check_freshness(
         lines.append(f"  Fix: {cat['fix_action']}")
         lines.append("")
     return "\n".join(lines)
+
+
+@tool(tier="deferred", category="core")
+async def rka_resolve_stale(entity_id: str, verdict: str, resolution: str,
+                          resolved_by: str, journal_id: str | None = None, *, project_id: str) -> dict:
+    """Record a reasoned stale disposition; does not revive structural invalidity."""
+    async with _client(project_id=project_id) as c:
+        response = await c.post("/api/freshness/resolve-stale", json={
+            "entity_id": entity_id, "verdict": verdict, "resolution": resolution,
+            "resolved_by": resolved_by, "journal_id": journal_id,
+        })
+        _raise_with_detail(response)
+        return response.json()
+
+
+@tool(tier="deferred", category="core")
+async def rka_record_directive_dependency(directive_id: str, decision_id: str,
+                                        declared_by: str, reason: str, *, project_id: str) -> dict:
+    """Explicitly declare that a directive requires a current decision."""
+    async with _client(project_id) as c:
+        response = await c.post(f"/api/notes/{directive_id}/dependencies", json={
+            "decision_id": decision_id, "declared_by": declared_by, "reason": reason})
+        _raise_with_detail(response)
+        return response.json()
 
 
 @tool(category="maintenance")

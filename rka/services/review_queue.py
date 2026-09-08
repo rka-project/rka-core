@@ -6,13 +6,26 @@ import json
 
 from rka.infra.ids import generate_id
 from rka.models.review_queue import ReviewItem, ReviewItemCreate, ReviewItemResolve
-from rka.services.base import BaseService, _now
+from rka.services.base import BaseService, VALID_ACTORS, _now
 
 
 class ReviewQueueService(BaseService):
     """Manages the Brain review queue."""
 
     async def flag_for_review(self, data: ReviewItemCreate) -> ReviewItem:
+        async with self.db.transaction():
+            await self._require_review_target(data.item_type, data.item_id)
+            return await self._flag_for_review(data)
+
+    async def _require_review_target(self, kind, entity_id):
+        if kind in self._LINK_ENTITY_TABLES:
+            await self._require_link_entity(kind, entity_id, project_id=self.project_id)
+            return
+        table = {"topic": "topics", "summary": "exploration_summaries"}.get(kind)
+        if table is None or not await self.db.fetchone(f"SELECT id FROM {table} WHERE id = ? AND project_id = ?", [entity_id, self.project_id]):
+            raise ValueError("review target not found in project")
+
+    async def _flag_for_review(self, data: ReviewItemCreate) -> ReviewItem:
         review_id = generate_id("review")
         await self.db.execute(
             """INSERT INTO review_queue
@@ -60,6 +73,25 @@ class ReviewQueueService(BaseService):
         return [self._row_to_model(r) for r in rows]
 
     async def resolve(self, review_id: str, data: ReviewItemResolve) -> ReviewItem:
+        async with self.db.transaction():
+            item = await self.get(review_id)
+            if item is None:
+                raise ValueError("review not found in project")
+            await self._require_review_target(item.item_type, item.item_id)
+            if not data.resolved_by.strip() or not data.resolution.strip() or data.status == "pending":
+                raise ValueError("review resolution requires rationale and a non-pending status")
+            if item.status in {"resolved", "dismissed"}:
+                if (item.status, item.resolved_by, item.resolution) == (data.status, data.resolved_by, data.resolution):
+                    return item
+                raise ValueError("review already closed with different resolution")
+            result = await self._resolve_open(review_id, data)
+            audit_actor = data.resolved_by if data.resolved_by in VALID_ACTORS else "system"
+            await self.audit("update", item.item_type, item.item_id, audit_actor,
+                             {"action": "review_resolution", "review_id": review_id, "before_status": item.status,
+                              "after_status": data.status, "resolution": data.resolution, "resolved_by": data.resolved_by})
+            return result
+
+    async def _resolve_open(self, review_id: str, data: ReviewItemResolve) -> ReviewItem:
         await self.db.execute(
             """UPDATE review_queue
                SET status = ?, resolved_by = ?, resolution = ?, resolved_at = ?

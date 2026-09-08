@@ -215,27 +215,9 @@ async def _find_affected_entries(
     project_id: str,
     old_id: str,
 ) -> set[str]:
-    """Mirror of `DecisionService.supersede_decision`'s affected-entry
-    discovery at `rka/services/decisions.py:263-288` — kept in sync via
-    the drift lock-test in tests/test_services/test_admin_repair_drift.py.
-    """
-    linked_entries = await db.fetchall(
-        """SELECT source_id FROM entity_links
-           WHERE target_type = 'decision' AND target_id = ?
-             AND link_type IN ('references', 'justified_by')
-             AND project_id = ?""",
-        [old_id, project_id],
-    )
-    json_linked = await db.fetchall(
-        """SELECT id FROM journal
-           WHERE project_id = ?
-             AND related_decisions IS NOT NULL
-             AND EXISTS (
-                 SELECT 1 FROM json_each(related_decisions) WHERE value = ?
-             )""",
-        [project_id, old_id],
-    )
-    return {r["source_id"] for r in linked_entries} | {r["id"] for r in json_linked}
+    """Use the same typed discovery as live supersession."""
+    from rka.services.lifecycle import find_affected_entries
+    return await find_affected_entries(db, project_id, old_id)
 
 
 def _now_iso() -> str:
@@ -244,6 +226,15 @@ def _now_iso() -> str:
 
 
 async def _repair_one_pair(
+    db: Database, project_id: str, old_id: str, new_id: str, actor: str, dry_run: bool,
+) -> PairReport:
+    # Validate and apply in the same snapshot; a parallel live transition cannot
+    # change the pair between discovery and mutation.
+    async with db.transaction():
+        return await _repair_one_pair_locked(db, project_id, old_id, new_id, actor, dry_run)
+
+
+async def _repair_one_pair_locked(
     db: Database,
     project_id: str,
     old_id: str,
@@ -386,21 +377,8 @@ async def _repair_one_pair(
 
         if affected:
             cascade_now = _now_iso()
-            for entry_id in affected:
-                await db.execute(
-                    "UPDATE claims SET stale = 1, updated_at = ? "
-                    "WHERE source_entry_id = ? AND project_id = ?",
-                    [cascade_now, entry_id, project_id],
-                )
-                await db.execute(
-                    """UPDATE evidence_clusters SET needs_reprocessing = 1, updated_at = ?
-                       WHERE id IN (
-                           SELECT DISTINCT ce.cluster_id FROM claim_edges ce
-                           JOIN claims c ON ce.source_claim_id = c.id
-                           WHERE c.source_entry_id = ? AND ce.relation = 'member_of'
-                       ) AND project_id = ?""",
-                    [cascade_now, entry_id, project_id],
-                )
+            from rka.services.lifecycle import apply_decision_impact
+            await apply_decision_impact(db, project_id, old_id, new_id, actor, cascade_now, reflag=False)
             report.add(
                 "staleness_cascade", "DONE",
                 f"cascaded across {len(affected)} entries",

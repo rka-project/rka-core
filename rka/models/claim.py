@@ -265,7 +265,18 @@ class ClaimUpdate(BaseModel):
     stale: bool | None = None
 
 
-class Claim(BaseModel):
+class FreshnessProjection(BaseModel):
+    staleness: str = "green"
+    stale_reason: str | None = None
+    staleness_reviewed_at: str | None = None
+    staleness_verdict: str | None = None
+    staleness_resolution: str | None = None
+    staleness_resolution_journal_id: str | None = None
+    staleness_resolved_by: str | None = None
+    currentness: dict = Field(default_factory=dict)
+
+
+class Claim(FreshnessProjection):
     """Full claim record from database."""
 
     id: str
@@ -336,7 +347,7 @@ class EvidenceClusterUpdate(BaseModel):
     research_question_id: str | None = None
 
 
-class EvidenceCluster(BaseModel):
+class EvidenceCluster(FreshnessProjection):
     """Full evidence cluster record from database."""
 
     id: str

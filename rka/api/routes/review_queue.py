@@ -34,7 +34,10 @@ async def flag_for_review(
     data: ReviewItemCreate,
     svc: ReviewQueueService = Depends(get_scoped_review_queue_service),
 ):
-    return await svc.flag_for_review(data)
+    try:
+        return await svc.flag_for_review(data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.put("/review-queue/{review_id}", response_model=ReviewItem)
@@ -46,4 +49,7 @@ async def resolve_review(
     item = await svc.get(review_id)
     if item is None:
         raise HTTPException(404, f"Review item {review_id} not found")
-    return await svc.resolve(review_id, data)
+    try:
+        return await svc.resolve(review_id, data)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc

@@ -388,6 +388,10 @@ class NoteService(BaseService):
                         )
 
             after = {field: updates[field] for field in before if field != "tags"}
+            if any(field in before and before[field] != after[field]
+                   for field in ("content", "status", "confidence", "superseded_by")):
+                from rka.services.lifecycle import invalidate_entry_dependents
+                await invalidate_entry_dependents(self.db, self.project_id, {entry_id}, updates["updated_at"])
             if tags is not None:
                 after["tags"] = sorted(await self._get_tags("journal", entry_id))
             fields = list(updates)

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from rka.infra.database import Database
 from rka.infra.ids import generate_id
 from rka.services.base import BaseService
+from rka.services.currentness import CURRENCY_COLUMNS
 
 if TYPE_CHECKING:
     from rka.services.search import SearchService
@@ -40,6 +41,7 @@ class GraphService:
             "synthesis_valid_until",
         ),
         "review": ("status",),
+        **CURRENCY_COLUMNS,
     }
 
     def __init__(self, db: Database):
@@ -865,11 +867,7 @@ class GraphService:
         tags_by_id: dict[str, list[str]] = {}
         if kept:
             placeholders = ",".join("?" for _ in kept)
-            project_clause = (
-                "(project_id = ? OR project_id IS NULL)"
-                if project_id == "proj_default"
-                else "project_id = ?"
-            )
+            project_clause = "project_id = ?"
             for row in await self.db.fetchall(
                 f"SELECT entity_id, tag FROM tags "
                 f"WHERE {project_clause} "

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from rka.services.base import BaseService
+from rka.services.currentness import review_projection
 from rka.services.rendering import with_staleness_prefix
 
 
@@ -36,8 +37,8 @@ class ResearchMapService(BaseService):
             )
             # Check for rq:* lifecycle tag
             rq_tag = await self.db.fetchone(
-                "SELECT tag FROM tags WHERE entity_type = 'decision' AND entity_id = ? AND tag LIKE 'rq:%'",
-                [rq["id"]],
+                "SELECT tag FROM tags WHERE project_id = ? AND entity_type = 'decision' AND entity_id = ? AND tag LIKE 'rq:%'",
+                [self.project_id, rq["id"]],
             )
             display_status = rq_tag["tag"][3:] if rq_tag else rq["status"]
             result.append({
@@ -68,14 +69,15 @@ class ResearchMapService(BaseService):
             edges = await self.db.fetchall(
                 """SELECT DISTINCT ce.relation, ce.target_claim_id, ce.confidence
                    FROM claim_edges ce
-                   JOIN claim_edges ce2 ON ce.target_claim_id = ce2.source_claim_id
-                   WHERE ce.cluster_id = ? AND ce2.cluster_id != ?
+                   JOIN claim_edges ce2 ON ce.target_claim_id = ce2.source_claim_id AND ce.project_id = ce2.project_id
+                   WHERE ce.project_id = ? AND ce.cluster_id = ? AND ce2.cluster_id != ?
                      AND ce.relation IN ('supports', 'contradicts', 'qualifies')
                    LIMIT 20""",
-                [c["id"], c["id"]],
+                [self.project_id, c["id"], c["id"]],
             )
             result.append({
                 "id": c["id"],
+                **review_projection(c),
                 "label": c["label"],
                 # Affordance B (Mission B): STALE prefix on stale synthesis.
                 "synthesis": with_staleness_prefix(
@@ -110,8 +112,8 @@ class ResearchMapService(BaseService):
                       j.source as source_actor,
                       {ClaimService._SCOPE_PROJECTION}
                FROM claims c
-               JOIN claim_edges ce ON ce.source_claim_id = c.id AND ce.relation = 'member_of'
-               LEFT JOIN journal j ON j.id = c.source_entry_id
+               JOIN claim_edges ce ON ce.source_claim_id = c.id AND ce.project_id = c.project_id AND ce.relation = 'member_of'
+               LEFT JOIN journal j ON j.id = c.source_entry_id AND j.project_id = c.project_id
                {ClaimService._SCOPE_JOIN}
                WHERE ce.cluster_id = ? AND c.project_id = ?
                ORDER BY c.confidence DESC""",
@@ -125,6 +127,7 @@ class ResearchMapService(BaseService):
             rows.append(
                 {
                     "id": c["id"],
+                    **review_projection(c),
                     "claim_type": c["claim_type"],
                     "content": c["content"],
                     "confidence": c.get("confidence", 0.5),
@@ -199,6 +202,7 @@ class ResearchMapService(BaseService):
 
         return {
             "id": cluster["id"],
+            **review_projection(cluster),
             "research_question_id": cluster.get("research_question_id"),
             "label": cluster["label"],
             # Affordance B (Mission B): STALE prefix on stale synthesis.
@@ -263,7 +267,7 @@ class ResearchMapService(BaseService):
         # Attach top clusters to each RQ
         for rq in rqs:
             clusters = await self.db.fetchall(
-                """SELECT id, label, confidence, claim_count, COALESCE(staleness, 'green') AS staleness
+                """SELECT *
                    FROM evidence_clusters
                    WHERE research_question_id = ? AND project_id = ?
                    ORDER BY claim_count DESC""",
@@ -272,6 +276,7 @@ class ResearchMapService(BaseService):
             rq["clusters"] = [
                 {
                     "id": c["id"],
+                    **review_projection(c),
                     "label": c["label"],
                     "confidence": c.get("confidence", "emerging"),
                     "claim_count": c.get("claim_count", 0),
@@ -307,6 +312,7 @@ class ResearchMapService(BaseService):
             "unassigned_clusters": [
                 {
                     "id": c["id"],
+                    **review_projection(c),
                     "label": c["label"],
                     "claim_count": c.get("claim_count", 0),
                     "confidence": c.get("confidence", "emerging"),

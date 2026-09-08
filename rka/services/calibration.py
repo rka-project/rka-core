@@ -13,8 +13,6 @@ tests can verify them without the DB in the loop.
 
 from __future__ import annotations
 
-from typing import Iterable
-
 from rka.infra.ids import generate_id
 from rka.models.calibration import (
     CalibrationBin,
@@ -132,6 +130,13 @@ class CalibrationService(BaseService):
         )
 
     async def record(
+        self, decision_id: str, data: CalibrationOutcomeCreate,
+    ) -> CalibrationOutcome:
+        async with self.db.transaction():
+            await self._require_link_entity("decision", decision_id, project_id=self.project_id)
+            return await self._record_scoped(decision_id, data)
+
+    async def _record_scoped(
         self,
         decision_id: str,
         data: CalibrationOutcomeCreate,

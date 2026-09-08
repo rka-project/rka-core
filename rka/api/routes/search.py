@@ -29,6 +29,9 @@ class SearchResult(BaseModel):
     status: str | None = None
     superseded_by: str | None = None
     stale: bool | None = None
+    staleness: str | None = None
+    staleness_verdict: str | None = None
+    currentness: dict | None = None
 
 
 @router.post("/search", response_model=list[SearchResult])
@@ -55,6 +58,9 @@ async def search(
             status=h.status,
             superseded_by=h.superseded_by,
             stale=h.stale,
+            staleness=h.staleness,
+            staleness_verdict=h.staleness_verdict,
+            currentness=h.currentness,
         )
         for h in hits
     ]

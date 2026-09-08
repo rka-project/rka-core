@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
+from rka.services.lifecycle import DirectiveDependencyService
 
 from rka.models.journal import (
     JournalAttributionCorrection, JournalAttributionRevision,
@@ -14,6 +17,30 @@ from rka.services.notes import (
 from rka.api.deps import get_scoped_note_service
 
 router = APIRouter()
+
+
+class DirectiveDependencyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision_id: str
+    declared_by: Literal["brain", "executor", "pi"]
+    reason: str = Field(min_length=1)
+
+
+@router.post("/notes/{directive_id}/dependencies")
+async def record_directive_dependency(directive_id: str, data: DirectiveDependencyRequest,
+                                     svc: NoteService = Depends(get_scoped_note_service)):
+    try:
+        return await DirectiveDependencyService(svc.db, project_id=svc.project_id).record(directive_id, **data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/notes/{directive_id}/dependencies")
+async def list_directive_dependencies(directive_id: str, svc: NoteService = Depends(get_scoped_note_service)):
+    try:
+        return await DirectiveDependencyService(svc.db, project_id=svc.project_id).list(directive_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.post("/notes", response_model=JournalEntry, status_code=201)

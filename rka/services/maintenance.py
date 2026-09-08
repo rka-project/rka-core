@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from rka.services.currentness import pending_review_sql
+
 import logging
 from typing import Any
 
@@ -65,6 +67,7 @@ class MaintenanceService(BaseService):
             "clusters_needing_synthesis",
             """SELECT COUNT(*) AS c FROM evidence_clusters ec
                WHERE ec.project_id = ? AND ec.claim_count > 0
+                 AND (ec.staleness_verdict IS NULL OR ec.staleness_verdict IN ('current', 'dismissed'))
                  AND ((ec.synthesis IS NULL OR ec.synthesis = '') OR ec.needs_reprocessing = 1)""",
             [pid],
         )
@@ -128,15 +131,17 @@ class MaintenanceService(BaseService):
         )
         await _count(
             "stale_claims",
-            "SELECT COUNT(*) AS c FROM claims WHERE project_id = ? AND staleness IN ('yellow', 'red')",
+            f"SELECT COUNT(*) AS c FROM claims WHERE project_id = ? AND {pending_review_sql('claim')}",
             [pid],
         )
         await _count(
             "stale_clusters",
-            "SELECT COUNT(*) AS c FROM evidence_clusters WHERE project_id = ? AND staleness IN ('yellow', 'red')",
+            f"SELECT COUNT(*) AS c FROM evidence_clusters WHERE project_id = ? AND {pending_review_sql('cluster')}",
             [pid],
         )
 
+        from rka.services.lifecycle import DirectiveDependencyService
+        counts["directive_dependency_gaps"] = (await DirectiveDependencyService(self.db, project_id=pid).review_candidates())["count"]
         total = sum(counts.values())
         top = sorted(
             [{"name": k, "count": v} for k, v in counts.items() if v > 0],
@@ -161,7 +166,10 @@ class MaintenanceService(BaseService):
         stale_claims = await self._stale_claims(pid)
         stale_clusters = await self._stale_clusters(pid)
 
+        from rka.services.lifecycle import DirectiveDependencyService
+        directive_dependencies = await DirectiveDependencyService(self.db, project_id=pid).review_candidates()
         categories = {
+            "directive_dependency_gaps": directive_dependencies,
             "entries_without_tags": entries_without_tags,
             "entries_without_claims": entries_without_claims,
             "clusters_needing_synthesis": clusters_needing_synthesis,
@@ -237,6 +245,7 @@ class MaintenanceService(BaseService):
             """SELECT ec.id FROM evidence_clusters ec
                WHERE ec.project_id = ?
                  AND ec.claim_count > 0
+                 AND (ec.staleness_verdict IS NULL OR ec.staleness_verdict IN ('current', 'dismissed'))
                  AND (
                      (ec.synthesis IS NULL OR ec.synthesis = '')
                      OR ec.needs_reprocessing = 1
@@ -366,8 +375,8 @@ class MaintenanceService(BaseService):
 
     async def _stale_claims(self, pid: str) -> dict:
         rows = await self.db.fetchall(
-            """SELECT id FROM claims
-               WHERE project_id = ? AND staleness IN ('yellow', 'red')
+            f"""SELECT id FROM claims
+               WHERE project_id = ? AND {pending_review_sql('claim')}
                ORDER BY updated_at DESC LIMIT 50""",
             [pid],
         )
@@ -381,8 +390,8 @@ class MaintenanceService(BaseService):
 
     async def _stale_clusters(self, pid: str) -> dict:
         rows = await self.db.fetchall(
-            """SELECT id FROM evidence_clusters
-               WHERE project_id = ? AND staleness IN ('yellow', 'red')
+            f"""SELECT id FROM evidence_clusters
+               WHERE project_id = ? AND {pending_review_sql('cluster')}
                ORDER BY updated_at DESC LIMIT 50""",
             [pid],
         )

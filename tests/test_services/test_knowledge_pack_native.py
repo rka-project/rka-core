@@ -945,10 +945,15 @@ async def test_native_manuscript_round_trip_preserves_history_without_synthesis(
         },
         "unit_id": imported_units["R1"]["id"],
     }
-    assert not await db.fetchone(
-        """SELECT 1 FROM jobs
-           WHERE project_id = 'proj_native_import'"""
+    # E-series imports persist a completed lexical-index receipt. They must
+    # not restore source worker jobs or schedule synthesis/verification.
+    imported_jobs = await db.fetchall(
+        "SELECT job_type, status, payload FROM jobs WHERE project_id = 'proj_native_import'"
     )
+    assert len(imported_jobs) == 1
+    assert imported_jobs[0]["job_type"] == "pack_import"
+    assert imported_jobs[0]["status"] == "completed"
+    assert json.loads(imported_jobs[0]["payload"])["embedding_job_id"] is None
     assert not await db.fetchone(
         """SELECT 1 FROM manuscript_migration_issues
            WHERE project_id = 'proj_native_import'"""
@@ -1095,12 +1100,14 @@ async def test_pack_import_rejects_outline_parent_absent_from_pack(
 
     _rewrite_pack_manifest(pack_path, corrupt_path, corrupt)
     with corrupt_path.open("rb") as pack_file:
-        with pytest.raises(ValueError, match="parent outside the project or absent"):
+        from rka.services.knowledge_pack import KnowledgePackIntegrityError
+        with pytest.raises(KnowledgePackIntegrityError) as error:
             await KnowledgePackService(db).import_pack(
                 pack_file,
                 project_id="proj_outline_missing_parent",
                 project_name="Outline missing parent",
             )
+        assert any(item.get("column") == "parent_unit_id" for item in error.value.issues)
     assert (
         await db.fetchone("SELECT id FROM projects WHERE id = 'proj_outline_missing_parent'")
         is None

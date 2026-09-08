@@ -189,6 +189,23 @@ jobs:
           tests/test_services/test_update_scope_guards.py
           tests/test_mcp/test_core_reliability_journal_roundtrip.py
 
+      - name: Verify currentness, lifecycle, and portable integrity on this platform
+        env:
+          RKA_DATA_DIR: ${{ runner.temp }}/rka-i4-i7-data
+          RKA_EMBEDDINGS_ENABLED: "false"
+          RKA_LLM_ENABLED: "false"
+          RKA_API_URL: http://127.0.0.1:1
+          HF_HUB_OFFLINE: "1"
+        run: >-
+          python -m pytest -q --tb=short --strict-markers
+          tests/test_db/test_migration_058_059.py
+          tests/test_services/test_currentness_resolution.py
+          tests/test_services/test_i_series_lifecycle.py
+          tests/test_services/test_i_series_adversarial.py
+          tests/test_services/test_pack_preflight.py
+          tests/test_services/test_admin_repair.py
+          tests/test_services/test_knowledge_pack.py
+
   docker-core:
     runs-on: ubuntu-latest
     timeout-minutes: 15

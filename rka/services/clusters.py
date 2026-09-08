@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from rka.services.currentness import currentness, review_projection
+
 import logging
 
 from rka.infra.ids import generate_id
@@ -308,17 +310,20 @@ class ClusterService(BaseService):
         cluster = await self.get(cluster_id)
         if cluster is None:
             return {"outcome": "missing"}
+        if cluster.staleness_verdict in {"historical", "retired", "superseded", "retracted"}:
+            return {"outcome": "noop", "reason": "inactive_disposition"}
         if not self.llm:
             return {"outcome": "skipped", "reason": "llm_disabled"}
 
         # Get all claims in this cluster
         claims = await self.db.fetchall(
             """SELECT c.* FROM claims c
-               JOIN claim_edges ce ON ce.source_claim_id = c.id
-               WHERE ce.cluster_id = ? AND ce.relation = 'member_of' AND c.stale = 0
+               JOIN claim_edges ce ON ce.source_claim_id = c.id AND ce.project_id = c.project_id
+               WHERE ce.cluster_id = ? AND ce.project_id = ? AND ce.relation = 'member_of' AND c.stale = 0
                ORDER BY c.confidence DESC""",
-            [cluster_id],
+            [cluster_id, self.project_id],
         )
+        claims = [row for row in claims if currentness(row)["is_current"]]
         if not claims:
             return {"outcome": "noop", "reason": "no_claims"}
 
@@ -441,6 +446,7 @@ class ClusterService(BaseService):
         # so that any consumer of EvidenceCluster (rka_list_clusters and
         # rka_get_cluster among others) sees the stale signal prominently.
         return EvidenceCluster(
+            **review_projection(row),
             id=row["id"],
             research_question_id=row.get("research_question_id"),
             label=row["label"],
