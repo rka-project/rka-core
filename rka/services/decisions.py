@@ -225,7 +225,7 @@ class DecisionService(BaseService):
 
         async with self.db.transaction():
             owned = await self.db.fetchone(
-                """SELECT id, superseded_by
+                """SELECT id, status, superseded_by
                    FROM decisions
                    WHERE id = ? AND project_id = ?""",
                 [dec_id, self.project_id],
@@ -235,6 +235,11 @@ class DecisionService(BaseService):
                     f"decision {dec_id!r} not found in project "
                     f"{self.project_id}"
                 )
+
+            if (owned["superseded_by"] or owned["status"] == "superseded") and (
+                "status" in dump and dump["status"] != owned["status"]
+            ):
+                raise ValueError("A superseded decision cannot be reopened; update the active successor instead")
 
             # A generic update may not flip status to 'superseded' without
             # naming the successor. Check the owned row under the same write
@@ -351,6 +356,42 @@ class DecisionService(BaseService):
         new_data: DecisionCreate | DecisionSupersedeBody,
         actor: str = "brain",
     ) -> Decision:
+        """Own creation and transition together; exact retries return the same successor."""
+        self._validate_actor(actor)
+        intent = {"data": new_data.model_dump(mode="json"), "actor": actor}
+        async with self.db.transaction():
+            old = await self.get(old_decision_id)
+            if old is None:
+                raise ValueError("decision not found in project")
+            previous = await self.db.fetchone(
+                "SELECT details FROM audit_log WHERE project_id = ? AND entity_type = 'decision' AND entity_id = ? "
+                "AND action = 'update' AND json_extract(details, '$.action') = 'supersede_decision' ORDER BY id DESC LIMIT 1",
+                [self.project_id, old_decision_id])
+            if previous:
+                receipt = json.loads(previous["details"])
+                if receipt["intent"] == intent:
+                    successor = await self.get(receipt["successor_id"])
+                    if successor is None:
+                        raise ValueError("supersession receipt target is missing")
+                    return successor
+                raise ValueError("decision already superseded with different intent")
+            if old.status not in {"active", "revisit"} or old.superseded_by:
+                raise ValueError("only an active unsuperseded decision may be replaced")
+            if new_data.status not in {"active", "revisit"}:
+                raise ValueError("the successor must be active or revisit")
+            result = await self._supersede_decision_in_transaction(old_decision_id, new_data, actor)
+            await self.audit("update", "decision", old_decision_id, actor, {
+                "action": "supersede_decision", "intent": intent, "successor_id": result.id,
+                "before_revision": old.scope_version, "after_revision": result.scope_version,
+            })
+            return result
+
+    async def _supersede_decision_in_transaction(
+        self,
+        old_decision_id: str,
+        new_data: DecisionCreate | DecisionSupersedeBody,
+        actor: str = "brain",
+    ) -> Decision:
         """Atomically supersede a decision and flag affected knowledge for Brain review.
 
         1. Mark old decision as superseded
@@ -394,10 +435,7 @@ class DecisionService(BaseService):
         if isinstance(new_data, DecisionSupersedeBody):
             new_data = DecisionCreate(**new_data.model_dump())
 
-        # Create new decision (commits the new decision as a normal active
-        # row). If the bookkeeping transaction below fails, the only
-        # crash-reachable state is "new active decision + untouched old" —
-        # clean and recoverable, never a half-applied supersede.
+        # The outer aggregate transaction also owns this nested creation.
         new_decision = await self.create(new_data, actor=actor)
 
         # Validate the actor once, before the transaction, so an invalid actor
@@ -440,44 +478,9 @@ class DecisionService(BaseService):
                 [link_id, new_decision.id, old_decision_id, actor_v, self.project_id],
             )
 
-            # Find journal entries linked to the old decision (reads; safe
-            # inside the txn). json_each() for exact element-level matching.
-            linked_entries = await self.db.fetchall(
-                """SELECT source_id FROM entity_links
-                   WHERE target_type = 'decision' AND target_id = ?
-                     AND link_type IN ('references', 'justified_by')
-                     AND project_id = ?""",
-                [old_decision_id, self.project_id],
-            )
-            json_linked = await self.db.fetchall(
-                """SELECT id FROM journal
-                   WHERE project_id = ?
-                     AND related_decisions IS NOT NULL
-                     AND EXISTS (
-                         SELECT 1 FROM json_each(related_decisions) WHERE value = ?
-                     )""",
-                [self.project_id, old_decision_id],
-            )
-            affected_entry_ids = {r["source_id"] for r in linked_entries} | {
-                r["id"] for r in json_linked
-            }
-
-            # Staleness cascade: mark claims stale + clusters needs_reprocessing.
-            for entry_id in affected_entry_ids:
-                await self.db.execute(
-                    "UPDATE claims SET stale = 1, updated_at = ? "
-                    "WHERE source_entry_id = ? AND project_id = ?",
-                    [now, entry_id, self.project_id],
-                )
-                await self.db.execute(
-                    """UPDATE evidence_clusters SET needs_reprocessing = 1, updated_at = ?
-                       WHERE id IN (
-                           SELECT DISTINCT ce.cluster_id FROM claim_edges ce
-                           JOIN claims c ON ce.source_claim_id = c.id
-                           WHERE c.source_entry_id = ? AND ce.relation = 'member_of'
-                       ) AND project_id = ?""",
-                    [now, entry_id, self.project_id],
-                )
+            from rka.services.lifecycle import apply_decision_impact
+            affected_entry_ids = await apply_decision_impact(
+                self.db, self.project_id, old_decision_id, new_decision.id, actor_v, now)
 
             # decision_superseded event (inlined emit_event).
             await self.db.execute(

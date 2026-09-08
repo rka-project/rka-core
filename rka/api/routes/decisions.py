@@ -383,7 +383,10 @@ async def record_outcome(
     cal_svc: CalibrationService = Depends(get_scoped_calibration_service),
 ):
     await _require_decision_for_outcome(dec_id, dec_svc)
-    return await cal_svc.record(dec_id, data)
+    try:
+        return await cal_svc.record(dec_id, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get(

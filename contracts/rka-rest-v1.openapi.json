@@ -850,6 +850,10 @@
               }
             ]
           },
+          "currentness": {
+            "additionalProperties": true,
+            "type": "object"
+          },
           "evidence_status": {
             "default": "unassessed",
             "enum": [
@@ -924,6 +928,70 @@
           "stale": {
             "default": false,
             "type": "boolean"
+          },
+          "stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness": {
+            "default": "green",
+            "type": "string"
+          },
+          "staleness_resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_resolution_journal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_resolved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "updated_at": {
             "anyOf": [
@@ -2616,6 +2684,32 @@
         ],
         "type": "object"
       },
+      "DirectiveDependencyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "declared_by": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "declared_by",
+          "reason"
+        ],
+        "type": "object"
+      },
       "DominatedByPayload": {
         "additionalProperties": false,
         "properties": {
@@ -2863,6 +2957,10 @@
               }
             ]
           },
+          "currentness": {
+            "additionalProperties": true,
+            "type": "object"
+          },
           "gap_count": {
             "default": 0,
             "type": "integer"
@@ -2881,6 +2979,70 @@
             "type": "string"
           },
           "research_question_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stale_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness": {
+            "default": "green",
+            "type": "string"
+          },
+          "staleness_resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_resolution_journal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_resolved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_reviewed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_verdict": {
             "anyOf": [
               {
                 "type": "string"
@@ -6516,6 +6678,54 @@
         ],
         "type": "object"
       },
+      "ResolveStaleRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "journal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolution": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "resolved_by": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi"
+            ],
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "current",
+              "historical",
+              "retired",
+              "superseded",
+              "retracted",
+              "dismissed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "verdict",
+          "resolution",
+          "resolved_by"
+        ],
+        "type": "object"
+      },
       "RestInterfaceCapability": {
         "properties": {
           "contract": {
@@ -6916,6 +7126,17 @@
       },
       "SearchResult": {
         "properties": {
+          "currentness": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "entity_id": {
             "type": "string"
           },
@@ -6933,6 +7154,26 @@
             "anyOf": [
               {
                 "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "staleness_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -12450,6 +12691,76 @@
         ]
       }
     },
+    "/api/freshness/resolve-stale": {
+      "post": {
+        "operationId": "resolve_stale_api_freshness_resolve_stale_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveStaleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "researcher-tools"
+        ]
+      }
+    },
     "/api/generate-claude-md": {
       "get": {
         "operationId": "generate_claude_md_api_generate_claude_md_get",
@@ -15332,6 +15643,150 @@
                 "schema": {
                   "$ref": "#/components/schemas/JournalEntry"
                 }
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "notes"
+        ]
+      }
+    },
+    "/api/notes/{directive_id}/dependencies": {
+      "get": {
+        "operationId": "list_directive_dependencies_api_notes__directive_id__dependencies_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "directive_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "notes"
+        ]
+      },
+      "post": {
+        "operationId": "record_directive_dependency_api_notes__directive_id__dependencies_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "directive_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectiveDependencyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             },
             "description": "Response"
@@ -18714,11 +19169,11 @@
   "x-rka-operation-counts": {
     "core_maturity": {
       "preview": 28,
-      "stable": 140
+      "stable": 143
     },
     "ownership": {
       "agentic-unsupported": 10,
-      "core": 168,
+      "core": 171,
       "core-legacy": 6,
       "writer-compatibility": 53
     }

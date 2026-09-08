@@ -7,6 +7,7 @@ import json
 from rka.infra.ids import generate_id
 from rka.services.base import BaseService, _now, _precise_now
 from rka.services.jobs import JobQueue
+from rka.services.currentness import RESOLUTION_FIELDS, currentness, pending_review_sql
 
 # entity_type -> the embed job the rest of the service layer enqueues for it.
 _EMBED_JOB = {
@@ -881,6 +882,8 @@ class ResearcherToolsService(BaseService):
         """Flag an entity and its propagated dependents atomically."""
         if staleness not in ("yellow", "red"):
             raise ValueError("staleness must be 'yellow' or 'red'")
+        if not reason.strip():
+            raise ValueError("reason must not be blank")
 
         async with self.db.transaction():
             return await self._flag_stale(
@@ -899,6 +902,14 @@ class ResearcherToolsService(BaseService):
     ) -> dict:
         """Implementation for :meth:`flag_stale` inside its transaction."""
         now = _now()
+        table = {"clm": "claims", "ecl": "evidence_clusters", "dec": "decisions"}.get(entity_id.split("_", 1)[0])
+        if table is None:
+            raise ValueError(f"Unsupported entity type for {entity_id}")
+        before = await self.db.fetchone(
+            f"SELECT * FROM {table} WHERE id = ? AND project_id = ?", [entity_id, self.project_id],
+        )
+        if before is None:
+            raise ValueError("entity not found in project")
         flagged = [{"id": entity_id, "staleness": staleness}]
 
         if entity_id.startswith("clm_"):
@@ -924,7 +935,76 @@ class ResearcherToolsService(BaseService):
             raise ValueError(f"Unsupported entity type for {entity_id}")
 
         await self.db.commit()
+        await self.audit("update", {"claims": "claim", "evidence_clusters": "cluster", "decisions": "decision"}[table],
+                         entity_id, "system", {"action": "flag_stale", "reason": reason, "staleness": staleness,
+                         "previous_review": {k: before.get(k) for k in RESOLUTION_FIELDS}, "flagged": flagged})
         return {"flagged": flagged, "total_flagged": len(flagged)}
+
+    async def resolve_stale(self, entity_id: str, verdict: str, resolution: str,
+                            resolved_by: str, journal_id: str | None = None) -> dict:
+        """Close review, not structural invalidation. Exact retries reuse receipts."""
+        table, kind = {"clm": ("claims", "claim"), "ecl": ("evidence_clusters", "cluster")}.get(
+            entity_id.split("_", 1)[0], (None, None))
+        if table is None:
+            raise ValueError("resolve_stale supports only claims and clusters")
+        if verdict not in {"current", "dismissed", "historical", "retired", "superseded", "retracted"}:
+            raise ValueError("invalid stale resolution verdict")
+        if not resolution.strip() or resolved_by not in {"brain", "executor", "pi"}:
+            raise ValueError("nonblank resolution and declared brain/executor/pi actor required")
+        async with self.db.transaction():
+            before = await self.db.fetchone(f"SELECT * FROM {table} WHERE id = ? AND project_id = ?",
+                                           [entity_id, self.project_id])
+            if before is None:
+                raise ValueError("entity not found in project")
+            if journal_id:
+                await self._require_link_entity("journal", journal_id, project_id=self.project_id)
+            intent = {"staleness_verdict": verdict, "staleness_resolution": resolution,
+                      "staleness_resolved_by": resolved_by, "staleness_resolution_journal_id": journal_id}
+            if before.get("staleness_reviewed_at"):
+                if any(before.get(k) != v for k, v in intent.items()):
+                    raise ValueError("already reviewed differently; reflag before a new resolution")
+                return await self._stale_receipt(entity_id, kind, before)
+            if not (before.get("stale") or before.get("needs_reprocessing") or before.get("staleness") in {"yellow", "red"}):
+                raise ValueError("entity has no open stale review; flag it first")
+            reviewed_at = _precise_now()
+            await self.db.execute(
+                f"UPDATE {table} SET staleness = 'green', stale_reason = NULL, "
+                "staleness_reviewed_at = ?, staleness_verdict = ?, staleness_resolution = ?, "
+                "staleness_resolution_journal_id = ?, staleness_resolved_by = ?, updated_at = ? "
+                "WHERE id = ? AND project_id = ?",
+                [reviewed_at, verdict, resolution, journal_id, resolved_by, reviewed_at, entity_id, self.project_id])
+            if journal_id:
+                await self.add_link("journal", journal_id, "references", kind, entity_id, created_by=resolved_by)
+            closed_reviews = await self.db.fetchall(
+                "SELECT id FROM review_queue WHERE project_id = ? AND item_type = ? AND item_id = ? "
+                "AND status IN ('pending', 'acknowledged') AND flag IN ('stale_dependency', 're_distill_review')",
+                [self.project_id, kind, entity_id])
+            await self.db.execute(
+                "UPDATE review_queue SET status = 'resolved', resolved_by = ?, resolution = ?, resolved_at = ? "
+                "WHERE project_id = ? AND item_type = ? AND item_id = ? AND status IN ('pending', 'acknowledged') "
+                "AND flag IN ('stale_dependency', 're_distill_review')",
+                [resolved_by, resolution, reviewed_at, self.project_id, kind, entity_id])
+            await self.audit("update", kind, entity_id, resolved_by, {"action": "resolve_stale",
+                "closed_review_ids": [row["id"] for row in closed_reviews],
+                "before": {k: before.get(k) for k in (*RESOLUTION_FIELDS, "stale", "staleness", "stale_reason", "needs_reprocessing")},
+                "after": {**intent, "staleness_reviewed_at": reviewed_at},
+            })
+            after = await self.db.fetchone(f"SELECT * FROM {table} WHERE id = ? AND project_id = ?", [entity_id, self.project_id])
+            return await self._stale_receipt(entity_id, kind, after)
+
+    async def _stale_receipt(self, entity_id, kind, record):
+        audit = await self.db.fetchone(
+            "SELECT id FROM audit_log WHERE project_id = ? AND entity_type = ? AND entity_id = ? "
+            "AND action = 'update' AND json_extract(details, '$.action') = 'resolve_stale' "
+            "AND json_extract(details, '$.after.staleness_reviewed_at') = ? ORDER BY id DESC LIMIT 1",
+            [self.project_id, kind, entity_id, record["staleness_reviewed_at"]])
+        link = await self.db.fetchone(
+            "SELECT id FROM entity_links WHERE project_id = ? AND source_type = 'journal' AND source_id = ? "
+            "AND link_type = 'references' AND target_type = ? AND target_id = ?",
+            [self.project_id, record.get("staleness_resolution_journal_id"), kind, entity_id])
+        return {"entity_id": entity_id, "project_id": self.project_id,
+                **{k: record.get(k) for k in RESOLUTION_FIELDS}, "currentness": currentness(record),
+                "audit_id": audit["id"] if audit else None, "provenance_link_id": link["id"] if link else None}
 
     async def _propagate_from_claim(self, claim_id: str, reason: str, now: str) -> list[dict]:
         """Propagate staleness from a claim to parent clusters and their decisions."""
@@ -987,13 +1067,15 @@ class ResearcherToolsService(BaseService):
 
     async def check_freshness(self, days_threshold: int = 30) -> dict:
         """Scan for potentially stale knowledge items. Pure SQL — no LLM."""
+        if not isinstance(days_threshold, int) or isinstance(days_threshold, bool) or days_threshold < 1:
+            raise ValueError("days_threshold must be a positive integer")
         pid = self.project_id
         categories = {}
 
         # 1. Claims already flagged stale
         flagged_claims = await self.db.fetchall(
-            """SELECT id, staleness, stale_reason FROM claims
-               WHERE project_id = ? AND staleness IN ('yellow', 'red')
+            f"""SELECT id, staleness, stale_reason FROM claims
+               WHERE project_id = ? AND {pending_review_sql('claim')}
                ORDER BY updated_at DESC LIMIT 50""",
             [pid],
         )
@@ -1001,14 +1083,15 @@ class ResearcherToolsService(BaseService):
             "count": len(flagged_claims),
             "ids": [r["id"] for r in flagged_claims],
             "description": "Claims flagged stale (yellow or red)",
-            "fix_action": "Brain reviews and resolves via rka_flag_stale or updates",
+            "fix_action": "Brain reviews and records resolve_stale",
         }
 
         # 2. Claims with superseded source entries
         superseded_source = await self.db.fetchall(
             """SELECT c.id FROM claims c
-               JOIN journal j ON j.id = c.source_entry_id
+               JOIN journal j ON j.id = c.source_entry_id AND j.project_id = c.project_id
                WHERE c.project_id = ? AND c.staleness = 'green'
+                 AND c.staleness_reviewed_at IS NULL
                  AND j.superseded_by IS NOT NULL
                LIMIT 50""",
             [pid],
@@ -1022,11 +1105,14 @@ class ResearcherToolsService(BaseService):
 
         # 3. Claims older than threshold with no recent cluster activity
         old_claims = await self.db.fetchall(
-            f"""SELECT c.id FROM claims c
+            """SELECT c.id FROM claims c
                WHERE c.project_id = ? AND c.staleness = 'green'
-                 AND c.valid_from < datetime('now', '-{days_threshold} days')
+                 AND (c.staleness_verdict IS NULL OR c.staleness_verdict IN ('current', 'dismissed'))
+                 AND c.stale = 0
+                 AND (c.valid_until IS NULL OR datetime(c.valid_until) > datetime('now'))
+                 AND datetime(COALESCE(c.staleness_reviewed_at, c.valid_from, c.created_at)) < datetime('now', ?)
                ORDER BY c.valid_from ASC LIMIT 50""",
-            [pid],
+            [pid, f"-{days_threshold} days"],
         )
         categories["aging_claims"] = {
             "count": len(old_claims),
@@ -1035,10 +1121,25 @@ class ResearcherToolsService(BaseService):
             "fix_action": "Brain reviews claim currency and flags stale if needed",
         }
 
+        old_clusters = await self.db.fetchall(
+            """SELECT id FROM evidence_clusters WHERE project_id = ? AND staleness = 'green'
+            AND needs_reprocessing = 0
+            AND (staleness_verdict IS NULL OR staleness_verdict IN ('current', 'dismissed'))
+            AND (synthesis_valid_until IS NULL OR datetime(synthesis_valid_until) > datetime('now'))
+            AND datetime(COALESCE(staleness_reviewed_at, updated_at, created_at)) < datetime('now', ?)
+            ORDER BY COALESCE(staleness_reviewed_at, updated_at, created_at) LIMIT 50""",
+            [pid, f"-{days_threshold} days"],
+        )
+        categories["aging_clusters"] = {
+            "count": len(old_clusters), "ids": [r["id"] for r in old_clusters],
+            "description": f"Clusters not reviewed or updated for {days_threshold} days",
+            "fix_action": "Brain reviews cluster currency and flags stale if needed",
+        }
+
         # 4. Clusters with >50% stale claims
         stale_clusters = await self.db.fetchall(
-            """SELECT ec.id FROM evidence_clusters ec
-               WHERE ec.project_id = ? AND ec.staleness IN ('yellow', 'red')
+            f"""SELECT ec.id FROM evidence_clusters ec
+               WHERE ec.project_id = ? AND {pending_review_sql('cluster', 'ec')}
                LIMIT 50""",
             [pid],
         )

@@ -135,6 +135,7 @@ _TABLE_CATEGORIES: dict[str, list[str]] = {
         "missions",
         "journal",
         "journal_attribution_revisions",
+        "directive_dependencies",
         "checkpoints",
         "interpretation_candidates",
         "interpretation_candidate_hints",
@@ -240,6 +241,7 @@ _INSERT_ORDER = (
     "missions",
     "journal",
     "journal_attribution_revisions",
+    "directive_dependencies",
     "reference_validation_attestations",
     "checkpoints",
     "artifacts",
@@ -341,6 +343,7 @@ _ID_ENTITY_TYPES = {
     "decisions": "decision",
     "journal": "journal",
     "journal_attribution_revisions": "journal_attribution_revision",
+    "directive_dependencies": "link",
     "checkpoints": "checkpoint",
     "claims": "claim",
     "claim_scope_versions": "claim_scope",
@@ -409,6 +412,7 @@ _DIRECT_ID_COLUMNS = {
     ),
     "journal": ("id", "related_mission", "supersedes", "superseded_by"),
     "journal_attribution_revisions": ("id", "journal_id"),
+    "directive_dependencies": ("id", "directive_id", "decision_id"),
     "checkpoints": ("id", "mission_id", "linked_decision_id"),
     "claims": ("id", "source_entry_id", "staleness_resolution_journal_id"),
     "claim_scope_versions": (
@@ -596,6 +600,7 @@ _DIRECT_ID_COLUMNS = {
 # Unresolvable references in these columns must be NULLed to avoid FK errors.
 # (Excludes "id" columns — those are PKs, not FK references.)
 _FK_COLUMNS: dict[str, set[str]] = {
+    "directive_dependencies": {"directive_id", "decision_id"},
     "decisions": {"parent_id", "superseded_by"},
     "missions": {"depends_on", "parent_mission_id", "motivated_by_decision"},
     "journal": {"supersedes"},
@@ -935,6 +940,7 @@ _ENTITY_LINK_ENDPOINT_TABLES: dict[str, str] = {
     "research_question": "decisions",
     "review": "review_queue",
     "topic": "topics",
+    "summary": "exploration_summaries",
 }
 
 _PLANNING_EVIDENCE_ENTITY_TABLES: dict[str, str] = {
@@ -1087,6 +1093,16 @@ class KnowledgePackService(BaseService):
             if not target_project_name:
                 raise ValueError("Imported project name cannot be empty")
             self._validate_import_project_id(target_project_id)
+
+            # Validate original bytes/identities before remapping can disguise
+            # corruption. No project, artifact directory or DB write exists yet.
+            await self._validate_import_rows(source_tables)
+            from rka.services.pack_integrity import original_hash_issues, validate_references
+            preflight_issues = original_hash_issues(source_tables, str(source_project["id"]))
+            preflight_issues += await validate_references(self.db, source_tables, str(source_project["id"]), _ENTITY_LINK_ENDPOINT_TABLES)
+            critical_preflight = [item for item in preflight_issues if item["severity"] == "critical"]
+            if critical_preflight:
+                raise KnowledgePackIntegrityError(critical_preflight)
 
             await self._assert_target_project_available(target_project_id, target_project_name)
             self._assert_no_duplicate_pack_dois(source_tables)
@@ -1254,7 +1270,7 @@ class KnowledgePackService(BaseService):
             source_project_id=source_project["id"],
             imported_counts=imported_counts,
             artifact_files_restored=artifact_files_restored,
-            integrity_issues=integrity_issues,
+            integrity_issues=preflight_issues + integrity_issues,
             indexing=indexing,
         )
 
@@ -1932,7 +1948,7 @@ class KnowledgePackService(BaseService):
         target_project_id: str,
     ) -> dict[str, Any]:
         remapped = dict(row)
-        if "project_id" in remapped:
+        if "project_id" in remapped or "project_id" in getattr(self, "_import_table_columns_cache", {}).get(table, ()):
             remapped["project_id"] = target_project_id
         if table == "qa_logs":
             remapped.pop("project_id", None)
@@ -1952,7 +1968,16 @@ class KnowledgePackService(BaseService):
 
         for column in _JSON_ID_COLUMNS.get(table, ()):
             if remapped.get(column):
-                if table == "reference_validation_attestations" and column == "full_json_payload":
+                if table == "manuscript_unit_outline_profiles" and column in {"figure_intentions", "table_intentions", "citation_intentions"}:
+                    # These three legacy fields explicitly contain prose ID
+                    # references. Keep that contract, without treating arbitrary
+                    # nested config/environment/provider strings as references.
+                    intentions = json.loads(remapped[column])
+                    remapped[column] = json.dumps([
+                        _EMBEDDED_ID_RE.sub(lambda match: id_map.get(match.group(0), match.group(0)), item)
+                        if isinstance(item, str) else item for item in intentions
+                    ])
+                elif table == "reference_validation_attestations" and column == "full_json_payload":
                     remapped[column] = self._rewrite_reference_validation_payload(
                         remapped[column],
                         id_map=id_map,
@@ -1965,6 +1990,7 @@ class KnowledgePackService(BaseService):
                         id_map=id_map,
                         source_project_id=source_project_id,
                         target_project_id=target_project_id,
+                        reference_list=column in {"related_decisions", "related_missions", "related_literature", "related_journal", "disconfirming_claim_ids", "entry_ids", "source_refs", "sources", "node_refs"},
                     )
 
         # Final pass: rewrite entity IDs EMBEDDED IN PROSE (rationale text
@@ -1994,6 +2020,20 @@ class KnowledgePackService(BaseService):
             if isinstance(checkpoint_snapshot, dict) and isinstance(
                 checkpoint_snapshot.get("components"), dict
             ):
+                # Outline snapshots serialize the same three reference-bearing
+                # fields as outline profiles. Re-key those exact positions too;
+                # otherwise a valid imported snapshot becomes falsely stale.
+                # Do not scan arbitrary component prose/config strings.
+                units = checkpoint_snapshot["components"].get("units", [])
+                if isinstance(units, list):
+                    for unit in units:
+                        if not isinstance(unit, dict):
+                            continue
+                        for field in ("figure_intentions", "table_intentions", "citation_intentions"):
+                            if isinstance(unit.get(field), str):
+                                unit[field] = _EMBEDDED_ID_RE.sub(
+                                    lambda match: id_map.get(match.group(0), match.group(0)), unit[field]
+                                )
                 encoded_components = json.dumps(
                     checkpoint_snapshot["components"],
                     sort_keys=True,
@@ -2069,10 +2109,17 @@ class KnowledgePackService(BaseService):
         remapped = id_map.get(value)
         if remapped is not None:
             return remapped
-        # Value not in id_map — if this column has a FK constraint,
-        # the original ID won't exist in the target DB, so NULL it out.
-        if column in _FK_COLUMNS.get(table, set()):
+        # Only declared runtime exclusions may lose a live FK. All required
+        # references were validated against the source pack before re-keying.
+        from rka.services.pack_integrity import EXCLUDED_FOREIGN_KEYS
+        if (table, column) in EXCLUDED_FOREIGN_KEYS:
             return None
+        if column in _FK_COLUMNS.get(table, set()):
+            raise KnowledgePackIntegrityError([{
+                "category": "missing_pack_reference", "severity": "critical", "count": 1,
+                "ids": [str(value)], "table": table, "column": column,
+                "description": "Required reference is absent from the source pack", "fix_action": "Restore the referenced record",
+            }])
         return value
 
     def _rewrite_json_refs(
@@ -2082,6 +2129,7 @@ class KnowledgePackService(BaseService):
         id_map: dict[str, str],
         source_project_id: str,
         target_project_id: str,
+        reference_list: bool = False,
     ) -> Any:
         if not isinstance(value, str):
             return value
@@ -2089,7 +2137,7 @@ class KnowledgePackService(BaseService):
             payload = json.loads(value)
         except json.JSONDecodeError:
             return value
-        rewritten = self._rewrite_nested_refs(payload, id_map, source_project_id, target_project_id)
+        rewritten = self._rewrite_nested_refs(payload, id_map, source_project_id, target_project_id, reference_position=reference_list)
         return json.dumps(rewritten)
 
     def _rewrite_reference_validation_payload(
@@ -2142,29 +2190,36 @@ class KnowledgePackService(BaseService):
         id_map: dict[str, str],
         source_project_id: str,
         target_project_id: str,
+        *, reference_position: bool = False,
     ) -> Any:
         if isinstance(value, str):
+            if not reference_position:
+                return value
             if value == source_project_id:
                 return target_project_id
             direct = id_map.get(value)
             if direct is not None:
                 return direct
-            # JSON intention fields and provider payloads may contain IDs in
-            # explanatory strings rather than as whole scalar values. Rewrite
-            # only tokens present in this pack's id_map, preserving all other
-            # prose byte-for-byte.
-            return _EMBEDDED_ID_RE.sub(
-                lambda match: id_map.get(match.group(0), match.group(0)),
-                value,
-            )
+            return value
         if isinstance(value, list):
             return [
-                self._rewrite_nested_refs(item, id_map, source_project_id, target_project_id)
+                self._rewrite_nested_refs(item, id_map, source_project_id, target_project_id, reference_position=reference_position)
                 for item in value
             ]
         if isinstance(value, dict):
             return {
-                key: self._rewrite_nested_refs(item, id_map, source_project_id, target_project_id)
+                key: self._rewrite_nested_refs(item, id_map, source_project_id, target_project_id,
+                    reference_position=key in {name for columns in _DIRECT_ID_COLUMNS.values() for name in columns} | {
+                        "id", "project_id", "entity_id", "target_id", "source_id", "source", "target",
+                        "journal_id", "source_entry_id", "decision_id", "old_decision_id", "new_decision_id",
+                        "claim_id", "claim_ids", "cluster_id", "mission_id", "manuscript_id", "unit_id",
+                        "artifact_id", "candidate_id", "branch_id", "version_id", "observation_id", "run_id",
+                        "literature_id", "citation_id", "context_manifest_id", "proposal_id", "dependency_id",
+                        "source_claim_id", "target_claim_id", "related_decisions", "related_journal", "related_missions",
+                        "related_literature", "disconfirming_claim_ids", "source_refs", "node_refs", "entry_ids",
+                        "affected_entries", "parent_id", "superseded_by", "supersedes", "successor_id",
+                        "artifact_version_id", "hook_id", "evidence_ids", "unratified_claim_id",
+                    })
                 for key, item in value.items()
             }
         return value

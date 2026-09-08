@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from rka.services.currentness import review_projection
+
 import hashlib
 import json
 import logging
@@ -235,6 +237,8 @@ class ClaimService(BaseService):
 
     async def update(self, claim_id: str, data: ClaimUpdate) -> Claim:
         dump = data.model_dump(exclude_none=True)
+        if dump.get("stale") is False:
+            raise ValueError("stale=false is unsupported; use resolve_stale for audited review; structural invalidation requires re-distillation")
         if not dump:
             current = await self.get(claim_id)
             if current is None:
@@ -795,6 +799,7 @@ class ClaimService(BaseService):
         scope = cls._scope_projection_to_model(row)
         readiness, findings = cls._assess_scope(row, scope)
         return Claim(
+            **review_projection(row),
             id=row["id"],
             source_entry_id=row["source_entry_id"],
             claim_type=row["claim_type"],

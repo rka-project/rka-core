@@ -459,6 +459,7 @@ RecordedByLit = Literal["pi", "brain", "executor", "system"]
 # ``rka/services/researcher_tools.py::flag_stale``. Stored on
 # ``claims.staleness`` / ``evidence_clusters.staleness`` columns.
 StalenessLit = Literal["yellow", "red"]
+StalenessVerdictLit = Literal["current", "historical", "retired", "superseded", "retracted", "dismissed"]
 
 
 # ---------------------------------------------------------------------------

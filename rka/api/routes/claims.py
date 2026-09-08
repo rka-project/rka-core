@@ -113,7 +113,10 @@ async def update_claim(
     claim = await svc.get(claim_id)
     if claim is None:
         raise HTTPException(404, f"Claim {claim_id} not found")
-    return await svc.update(claim_id, data)
+    try:
+        return await svc.update(claim_id, data)
+    except ValueError as exc:
+        _raise_claim_scope_error(exc)
 
 
 @router.post("/claims/edges", response_model=ClaimEdge, status_code=201)

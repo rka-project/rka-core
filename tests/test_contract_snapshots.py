@@ -59,16 +59,18 @@ def test_rest_v1_surface_and_dispositions_are_locked() -> None:
     assert snapshot["x-rka-operation-counts"] == {
         "ownership": {
             "agentic-unsupported": 10,
-            "core": 168,
+            "core": 171,
             "core-legacy": 6,
             "writer-compatibility": 53,
         },
-        "core_maturity": {"preview": 28, "stable": 140},
+        "core_maturity": {"preview": 28, "stable": 143},
     }
     assert len(AGENTIC_REST_OPERATIONS) == 10
     assert len(CORE_LEGACY_REST_OPERATIONS) == 6
     methods = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 140
+    assert sum(1 for item in snapshot["paths"].values() for key in item if key in methods) == 143
+    assert "post" in snapshot["paths"]["/api/freshness/resolve-stale"]
+    assert {"get", "post"} <= set(snapshot["paths"]["/api/notes/{directive_id}/dependencies"])
     assert "post" in snapshot["paths"]["/api/notes/{note_id}/attribution-corrections"]
     assert "get" in snapshot["paths"]["/api/notes/{note_id}/attribution-history"]
     assert "post" in snapshot["paths"]["/api/config/embedding/backfill/{job_id}/cancel"]
@@ -102,16 +104,17 @@ def test_mcp_v1_surface_and_dispositions_are_locked() -> None:
     assert snapshot["operation_counts"] == {
         "ownership": {
             "agentic-unsupported": 5,
-            "core": 108,
+            "core": 110,
             "core-legacy": 1,
             "writer-compatibility": 43,
         },
-        "core_maturity": {"preview": 22, "stable": 86},
+        "core_maturity": {"preview": 22, "stable": 88},
     }
-    assert len(snapshot["operations"]) == 86
+    assert len(snapshot["operations"]) == 88
+    assert {"resolve_stale", "record_directive_dependency"} <= set(snapshot["operations"])
     assert {"correct_note_attribution", "note_attribution_history"} <= set(snapshot["operations"])
     assert tuple(snapshot["transport_tools"]) == tuple(sorted(MCP_TRANSPORT_TOOLS))
-    assert len(OPERATIONS_SCHEMA) == 157
+    assert len(OPERATIONS_SCHEMA) == 159
     assert len(WRITER_COMPATIBILITY_OPERATIONS) == 43
     assert len(AGENTIC_MCP_OPERATIONS) == 5
     assert len(CORE_LEGACY_MCP_OPERATIONS) == 1

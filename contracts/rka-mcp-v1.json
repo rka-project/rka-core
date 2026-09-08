@@ -369,11 +369,11 @@
   "operation_counts": {
     "core_maturity": {
       "preview": 22,
-      "stable": 86
+      "stable": 88
     },
     "ownership": {
       "agentic-unsupported": 5,
-      "core": 108,
+      "core": 110,
       "core-legacy": 1,
       "writer-compatibility": 43
     }
@@ -3063,6 +3063,49 @@
       },
       "tool": "rka_execute"
     },
+    "record_directive_dependency": {
+      "category": "maintenance",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": {
+            "type": "string"
+          },
+          "declared_by": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi"
+            ],
+            "type": "string"
+          },
+          "directive_id": {
+            "type": "string"
+          },
+          "operation": {
+            "const": "record_directive_dependency",
+            "default": "record_directive_dependency",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "directive_id",
+          "decision_id",
+          "declared_by",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "tool": "rka_execute"
+    },
     "record_literature": {
       "category": "literature",
       "input_schema": {
@@ -3882,6 +3925,68 @@
         "type": "object"
       },
       "tool": "rka_query"
+    },
+    "resolve_stale": {
+      "category": "maintenance",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "entity_id": {
+            "type": "string"
+          },
+          "journal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "operation": {
+            "const": "resolve_stale",
+            "default": "resolve_stale",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "resolution": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "resolved_by": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi"
+            ],
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "current",
+              "historical",
+              "retired",
+              "superseded",
+              "retracted",
+              "dismissed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "entity_id",
+          "verdict",
+          "resolution",
+          "resolved_by"
+        ],
+        "type": "object"
+      },
+      "tool": "rka_execute"
     },
     "review_claims": {
       "category": "claims",
@@ -7045,6 +7150,45 @@
             ],
             "type": "object"
           },
+          "RecordDirectiveDependencyArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "decision_id": {
+                "type": "string"
+              },
+              "declared_by": {
+                "enum": [
+                  "brain",
+                  "executor",
+                  "pi"
+                ],
+                "type": "string"
+              },
+              "directive_id": {
+                "type": "string"
+              },
+              "operation": {
+                "const": "record_directive_dependency",
+                "default": "record_directive_dependency",
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "directive_id",
+              "decision_id",
+              "declared_by",
+              "reason"
+            ],
+            "type": "object"
+          },
           "RecordLiteratureArgs": {
             "additionalProperties": false,
             "properties": {
@@ -7692,6 +7836,64 @@
               "project_id",
               "cluster_id",
               "resolution"
+            ],
+            "type": "object"
+          },
+          "ResolveStaleArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "entity_id": {
+                "type": "string"
+              },
+              "journal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "operation": {
+                "const": "resolve_stale",
+                "default": "resolve_stale",
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "resolution": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "resolved_by": {
+                "enum": [
+                  "brain",
+                  "executor",
+                  "pi"
+                ],
+                "type": "string"
+              },
+              "verdict": {
+                "enum": [
+                  "current",
+                  "historical",
+                  "retired",
+                  "superseded",
+                  "retracted",
+                  "dismissed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "entity_id",
+              "verdict",
+              "resolution",
+              "resolved_by"
             ],
             "type": "object"
           },
@@ -9331,6 +9533,7 @@
                 "present_decision": "#/$defs/PresentDecisionArgs",
                 "process_paper": "#/$defs/ProcessPaperArgs",
                 "record_decision": "#/$defs/RecordDecisionArgs",
+                "record_directive_dependency": "#/$defs/RecordDirectiveDependencyArgs",
                 "record_literature": "#/$defs/RecordLiteratureArgs",
                 "record_note": "#/$defs/RecordNoteArgs",
                 "record_outcome": "#/$defs/RecordOutcomeArgs",
@@ -9338,6 +9541,7 @@
                 "register_source": "#/$defs/RegisterSourceArgs",
                 "resolve_checkpoint": "#/$defs/ResolveCheckpointArgs",
                 "resolve_contradiction": "#/$defs/ResolveContradictionArgs",
+                "resolve_stale": "#/$defs/ResolveStaleArgs",
                 "review_claims": "#/$defs/ReviewClaimsArgs",
                 "review_cluster": "#/$defs/ReviewClusterArgs",
                 "scan_workspace": "#/$defs/ScanWorkspaceArgs",
@@ -9483,6 +9687,12 @@
               },
               {
                 "$ref": "#/$defs/FlagStaleArgs"
+              },
+              {
+                "$ref": "#/$defs/ResolveStaleArgs"
+              },
+              {
+                "$ref": "#/$defs/RecordDirectiveDependencyArgs"
               },
               {
                 "$ref": "#/$defs/EvictionSweepArgs"

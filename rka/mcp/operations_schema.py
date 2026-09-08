@@ -4862,6 +4862,31 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "related_operations": ["workspace_scan", "bootstrap_workspace"],
         "notes": None,
     },
+    "resolve_stale": {
+        "operation": "resolve_stale", "tool": "rka_execute", "category": "maintenance", "role_tag": "BRAIN",
+        "summary": "Record audited claim/cluster disposition without reviving structural invalidation.",
+        "signature": "rka_execute(operation='resolve_stale', *, project_id, entity_id, verdict, resolution, resolved_by, journal_id=None)",
+        "required_fields": ["project_id", "entity_id", "verdict", "resolution", "resolved_by"],
+        "optional_fields": ["journal_id"],
+        "enums": {"verdict": ["current", "historical", "retired", "superseded", "retracted", "dismissed"], "resolved_by": ["brain", "executor", "pi"]},
+        "examples": [{"description": "Retain an obsolete finding as history.", "call": {
+            "operation": "resolve_stale", "project_id": "prj_01ABC...", "entity_id": "clm_01XYZ...",
+            "verdict": "historical", "resolution": "Reviewed against the replacement experiment.", "resolved_by": "brain"}}],
+        "related_operations": ["flag_stale", "freshness", "pending_maintenance"],
+        "notes": "Exact retries are idempotent; a new or changed verdict requires reflagging.",
+    },
+    "record_directive_dependency": {
+        "operation": "record_directive_dependency", "tool": "rka_execute", "category": "maintenance", "role_tag": "BRAIN",
+        "summary": "Declare explicit directive lifecycle dependence on a current decision.",
+        "signature": "rka_execute(operation='record_directive_dependency', *, project_id, directive_id, decision_id, declared_by, reason)",
+        "required_fields": ["project_id", "directive_id", "decision_id", "declared_by", "reason"], "optional_fields": [],
+        "enums": {"declared_by": ["brain", "executor", "pi"]},
+        "examples": [{"description": "Declare a scoped standing instruction.", "call": {
+            "operation": "record_directive_dependency", "project_id": "prj_01ABC...", "directive_id": "jrn_01XYZ...",
+            "decision_id": "dec_01XYZ...", "declared_by": "pi", "reason": "Applies only while this decision is in force."}}],
+        "related_operations": ["supersede_decision", "record_note", "pending_maintenance"],
+        "notes": "Ordinary references never authorize automatic directive retirement. Declarations are append-only.",
+    },
     "flag_stale": {
         "operation": "flag_stale",
         "tool": "rka_execute",

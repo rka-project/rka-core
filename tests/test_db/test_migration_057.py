@@ -45,7 +45,8 @@ async def test_upgrade_056_preserves_legacy_rows_history_and_is_repeatable(tmp_p
         )
         rows_before = await db.fetchall("SELECT * FROM journal ORDER BY id")
         events_before = await db.fetchall("SELECT * FROM journal_attribution_revisions")
-        monkeypatch.setattr(Database, "_migrations_directory", staticmethod(lambda: source))
+        # This test isolates 056 -> 057; later migrations have their own gates.
+        shutil.copy2(source / "057_journal_capture_mode.sql", before / "057_journal_capture_mode.sql")
         assert await db.run_migrations() == 1
         assert await db.fetchall("SELECT * FROM journal ORDER BY id") == [
             {**row, "capture_mode": "unknown"} for row in rows_before

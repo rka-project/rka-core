@@ -2135,6 +2135,8 @@ EXECUTE_OPERATIONS = (
     "scan_workspace",
     # maintenance
     "flag_stale",
+    "resolve_stale",
+    "record_directive_dependency",
     "eviction_sweep",
     # session / project
     "create_project",
@@ -2866,6 +2868,11 @@ async def dispatch_execute(
             project_id=project_id,  # type: ignore[arg-type]
             **chk_kw,
         )
+
+    if op == "resolve_stale":
+        return await _legacy("rka_resolve_stale")(project_id=project_id, **kw)
+    if op == "record_directive_dependency":
+        return await _legacy("rka_record_directive_dependency")(project_id=project_id, **kw)
 
     # --- review-style ops (updates / hooks / claims / clusters /
     # workspace / maintenance / manuscript) ---

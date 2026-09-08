@@ -18,7 +18,10 @@ async def create_checkpoint(
     actor: str = "executor",
     svc: CheckpointService = Depends(get_scoped_checkpoint_service),
 ):
-    return await svc.create(data, actor=actor)
+    try:
+        return await svc.create(data, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/checkpoints", response_model=list[Checkpoint])
@@ -50,4 +53,7 @@ async def resolve_checkpoint(
     chk = await svc.get(chk_id)
     if chk is None:
         raise HTTPException(404, f"Checkpoint {chk_id} not found")
-    return await svc.resolve(chk_id, data, decision_service=dec_svc)
+    try:
+        return await svc.resolve(chk_id, data, decision_service=dec_svc)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc

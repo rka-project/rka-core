@@ -55,7 +55,10 @@ async def update_mission(
     mission = await svc.get(mis_id)
     if mission is None:
         raise HTTPException(404, f"Mission {mis_id} not found")
-    return await svc.update(mis_id, data, actor=actor)
+    try:
+        return await svc.update(mis_id, data, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/missions/{mis_id}/report", response_model=Mission)
@@ -68,7 +71,10 @@ async def submit_report(
     mission = await svc.get(mis_id)
     if mission is None:
         raise HTTPException(404, f"Mission {mis_id} not found")
-    return await svc.submit_report(mis_id, data, actor=actor)
+    try:
+        return await svc.submit_report(mis_id, data, actor=actor)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/missions/{mis_id}/report", response_model=MissionReport | None)

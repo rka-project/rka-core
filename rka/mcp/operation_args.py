@@ -85,6 +85,7 @@ from rka.mcp._enums import (  # noqa: E402  (intentional post-docstring batch im
     EvidenceStatusLit,
     ReviewActionLit,
     StalenessLit,
+    StalenessVerdictLit,
 )
 
 # Batch B imports — Record/Create write op enums. ConfidenceLit / ClusterConfLit
@@ -3804,6 +3805,25 @@ class ScanWorkspaceArgs(ProjectScopedArgs):
 # ---------------------------------------------------------------------------
 
 
+class RecordDirectiveDependencyArgs(ProjectScopedArgs):
+    """Declare explicit directive -> decision lifecycle dependence, never inferred from citations."""
+    operation: Literal["record_directive_dependency"] = "record_directive_dependency"
+    directive_id: str
+    decision_id: str
+    declared_by: Literal["brain", "executor", "pi"]
+    reason: str = Field(min_length=1)
+
+
+class ResolveStaleArgs(ProjectScopedArgs):
+    """Record audited freshness disposition without clearing structural invalidation."""
+    operation: Literal["resolve_stale"] = "resolve_stale"
+    entity_id: str
+    verdict: StalenessVerdictLit
+    resolution: str = Field(min_length=1)
+    resolved_by: Literal["brain", "executor", "pi"]
+    journal_id: str | None = None
+
+
 class FlagStaleArgs(ProjectScopedArgs):
     """[BRAIN] Flag a knowledge entity as stale.
 
@@ -3916,6 +3936,8 @@ BatchDExecuteUnion = Annotated[
         ScanWorkspaceArgs,
         # Maintenance
         FlagStaleArgs,
+        ResolveStaleArgs,
+        RecordDirectiveDependencyArgs,
         EvictionSweepArgs,
     ],
     Field(discriminator="operation"),
@@ -5289,6 +5311,8 @@ ExecuteArgsUnion = Annotated[
         BootstrapWorkspaceArgs,
         ScanWorkspaceArgs,
         FlagStaleArgs,
+        ResolveStaleArgs,
+        RecordDirectiveDependencyArgs,
         EvictionSweepArgs,
     ],
     Field(discriminator="operation"),
@@ -5439,6 +5463,8 @@ __all__ = [
     "BootstrapWorkspaceArgs",
     "ScanWorkspaceArgs",
     "FlagStaleArgs",
+    "ResolveStaleArgs",
+    "RecordDirectiveDependencyArgs",
     "EvictionSweepArgs",
     # Batch D partial union
     "BatchDExecuteUnion",

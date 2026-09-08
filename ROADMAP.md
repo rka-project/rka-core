@@ -36,8 +36,12 @@ resume and rollback](docs/embedding-inspection.md). Native FastEmbed inference i
 isolated in a supervised child. Offline transition queues the existing durable
 worker; it does not claim completed inference or deployment. Cross-platform CI
 and the E-series acceptance evidence gate the PR merge. This is distinct from
-the completed Core-separation E0-E2 program above; I3-I7 and R1-R3 remain separate.
+the completed Core-separation E0-E2 program above. I3 is merged in PR #161;
+I4-I7 are implemented and locally validated in an isolated integration candidate
+(3847 Core tests passed). PR integration and native cross-platform CI remain
+pending. R1-R3 remain separate release/security gates.
 See [E-series validation and explicit limits](docs/superpowers/plans/2026-09-07-core-e-completion-validation.md).
+See [I-series implementation and integration status](docs/superpowers/plans/2026-09-08-core-i-completion-validation.md).
 
 The pre-rebaseline roadmap, including the completed Workbench program, is
 preserved in

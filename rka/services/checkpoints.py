@@ -108,11 +108,13 @@ class CheckpointService(BaseService):
     ) -> Checkpoint:
         """Resolve a checkpoint."""
         now = _now()
+        if not data.resolution.strip():
+            raise ValueError("resolution must not be blank")
         linked_decision_id = None
 
         async with self.db.transaction():
             checkpoint = await self.db.fetchone(
-                """SELECT id, description
+                """SELECT *
                    FROM checkpoints
                    WHERE id = ? AND project_id = ?""",
                 [chk_id, self.project_id],
@@ -122,6 +124,17 @@ class CheckpointService(BaseService):
                     f"checkpoint {chk_id!r} not found in project "
                     f"{self.project_id}"
                 )
+
+            if checkpoint["status"] != "open":
+                if (checkpoint["status"] == "resolved" and checkpoint["resolution"] == data.resolution
+                        and checkpoint["resolved_by"] == data.resolved_by
+                        and checkpoint.get("resolution_rationale") == data.rationale
+                        and bool(checkpoint.get("linked_decision_id")) == data.create_decision):
+                    return self._row_to_model(checkpoint)
+                raise ValueError("checkpoint already closed; conflicting resolution rejected")
+            await self._require_link_entity("mission", checkpoint["mission_id"], project_id=self.project_id)
+            if data.create_decision and decision_service is None:
+                raise ValueError("create_decision requires a scoped decision service")
 
             # Optionally create a linked decision. DecisionService uses the
             # same managed Database, so its nested transaction becomes a

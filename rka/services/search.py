@@ -11,6 +11,7 @@ from typing import Any
 from rka.infra.database import Database
 from rka.infra.embeddings import EmbeddingService
 from rka.services.artifacts import build_artifact_text, build_figure_text
+from rka.services.currentness import CURRENCY_COLUMNS, currentness
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,10 @@ def _tokens_remain(query: str) -> bool:
 # entity_type -> (source table, currency columns to lift onto the hit)
 # Only tables that actually carry a lifecycle signal appear here.
 _CURRENCY_COLUMNS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "decision": ("decisions", ("status", "superseded_by")),
-    "journal": ("journal", ("status", "superseded_by")),
-    "claim": ("claims", ("stale",)),
-    "mission": ("missions", ("status",)),
-    "literature": ("literature", ("status",)),
+    kind: (table, CURRENCY_COLUMNS[kind]) for kind, table in {
+        "decision": "decisions", "journal": "journal", "claim": "claims",
+        "cluster": "evidence_clusters", "mission": "missions", "literature": "literature",
+    }.items()
 }
 
 
@@ -49,6 +49,9 @@ class SearchHit:
     status: str | None = None
     superseded_by: str | None = None
     stale: bool | None = None
+    staleness: str | None = None
+    staleness_verdict: str | None = None
+    currentness: dict | None = None
 
 
 class SearchService:
@@ -318,11 +321,8 @@ class SearchService:
 
     @staticmethod
     def _is_retired(hit: SearchHit) -> bool:
-        return bool(
-            hit.status == "superseded"
-            or hit.superseded_by
-            or hit.stale
-        )
+        projection = hit.currentness or currentness(vars(hit))
+        return not projection["is_current"]
 
     @staticmethod
     def _current_first(hits: list[SearchHit]) -> list[SearchHit]:
@@ -381,6 +381,9 @@ class SearchService:
                 hit.superseded_by = values["superseded_by"]
             if values.get("stale") is not None:
                 hit.stale = bool(values["stale"])
+            hit.staleness = values.get("staleness")
+            hit.staleness_verdict = values.get("staleness_verdict")
+            hit.currentness = currentness(values)
         return hits
 
     async def _metadata_only_journal(self, constraints: dict, limit: int) -> list[SearchHit]:

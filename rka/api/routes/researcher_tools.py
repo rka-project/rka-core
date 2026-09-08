@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from rka.models.freshness import ResolveStaleRequest
 
 from rka.services.researcher_tools import ResearcherToolsService
 from rka.services.knowledge_pack import KnowledgePackService
@@ -164,6 +165,15 @@ async def check_freshness(
     svc: ResearcherToolsService = Depends(get_scoped_researcher_tools_service),
 ):
     return await svc.check_freshness(days_threshold)
+
+
+@router.post("/freshness/resolve-stale")
+async def resolve_stale(data: ResolveStaleRequest,
+                        svc: ResearcherToolsService = Depends(get_scoped_researcher_tools_service)):
+    try:
+        return await svc.resolve_stale(**data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/freshness/detect-contradictions")

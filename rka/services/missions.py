@@ -21,6 +21,19 @@ class MissionNotFoundError(ValueError):
 class MissionService(BaseService):
     """Manages mission lifecycle."""
 
+    async def _validate_mission_parent(self, mis_id, target_id, column):
+        if column not in {"depends_on", "parent_mission_id"}:
+            raise ValueError("unsupported mission relationship")
+        visited = {mis_id}
+        while target_id:
+            if target_id in visited:
+                raise ValueError(f"{column} would form a mission cycle")
+            visited.add(target_id)
+            row = await self.db.fetchone(f"SELECT {column} FROM missions WHERE id = ? AND project_id = ?", [target_id, self.project_id])
+            if row is None:
+                raise ValueError(f"{column} target not found in project")
+            target_id = row[column]
+
     def _job_dedupe_key(self, mis_id: str, operation: str) -> str:
         return f"{self.project_id}:mission:{mis_id}:{operation}"
 
@@ -64,6 +77,7 @@ class MissionService(BaseService):
             tasks_json = json.dumps([t.model_dump() for t in data.tasks])
 
         async with self.db.transaction():
+            await self._validate_mission_parent(mis_id, depends_on, "depends_on")
             if motivated_by is not None:
                 dec = await self.db.fetchone(
                     "SELECT id FROM decisions WHERE id = ? AND project_id = ?",
@@ -195,7 +209,7 @@ class MissionService(BaseService):
         for field, value in dump.items():
             if field == "tasks":
                 updates[field] = json.dumps(value)
-            elif field in ("motivated_by_decision", "depends_on"):
+            elif field in ("motivated_by_decision", "depends_on", "parent_mission_id"):
                 updates[field] = (value or "").strip() or None
             else:
                 updates[field] = value
@@ -206,7 +220,7 @@ class MissionService(BaseService):
 
         async with self.db.transaction():
             owned = await self.db.fetchone(
-                "SELECT id FROM missions WHERE id = ? AND project_id = ?",
+                "SELECT id, status, report FROM missions WHERE id = ? AND project_id = ?",
                 [mis_id, self.project_id],
             )
             if owned is None:
@@ -217,6 +231,12 @@ class MissionService(BaseService):
 
             if tags is not None:
                 await self._set_tags("mission", mis_id, tags)
+
+            for column in ("depends_on", "parent_mission_id"):
+                if column in updates:
+                    await self._validate_mission_parent(mis_id, updates[column], column)
+            if owned["report"] and updates.get("status", owned["status"]) != owned["status"]:
+                raise ValueError("accepted report is immutable; create a follow-up mission instead of reopening")
 
             if not updates:
                 current = await self.get(mis_id)
@@ -309,6 +329,27 @@ class MissionService(BaseService):
         return updated
 
     async def submit_report(
+        self, mis_id: str, data: MissionReportCreate, actor: str = "executor"
+    ) -> Mission:
+        """First report wins; identical retries are side-effect free."""
+        self._validate_actor(actor)
+        async with self.db.transaction():
+            mission = await self.get(mis_id)
+            if mission is None:
+                raise MissionNotFoundError("mission not found in project")
+            if mission.report:
+                old = mission.report.model_dump(exclude={"mission_id", "submitted_at"})
+                if old != data.model_dump():
+                    raise ValueError("accepted report cannot be overwritten; create a follow-up mission")
+                recorded = await self.db.fetchone("SELECT actor FROM audit_log WHERE project_id = ? AND entity_type = 'mission' AND entity_id = ? AND json_extract(details, '$.action') = 'submit_report' ORDER BY id DESC LIMIT 1", [self.project_id, mis_id])
+                if recorded and recorded["actor"] != actor:
+                    raise ValueError("report retry actor differs from original")
+                return mission
+            if mission.status not in {"pending", "active", "partial", "complete"}:
+                raise ValueError("blocked or cancelled mission cannot accept a completion report")
+            return await self._submit_first_report(mis_id, data, actor)
+
+    async def _submit_first_report(
         self, mis_id: str, data: MissionReportCreate, actor: str = "executor"
     ) -> Mission:
         """Submit an execution report for a mission."""

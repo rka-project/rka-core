@@ -275,6 +275,7 @@ class ProjectService(BaseService):
         "claim_evidence_relations",
         "claim_scope_versions",
         "journal_attribution_revisions",
+        "directive_dependencies",
         "source_admissions",
         "interpretation_review_events",
         "interpretation_candidate_hints",

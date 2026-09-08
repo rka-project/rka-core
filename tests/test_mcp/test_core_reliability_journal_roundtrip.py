@@ -142,6 +142,89 @@ async def mcp_env(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_i4_typed_and_deferred_resolution_roundtrip(mcp_env):
+    from rka.mcp.operation_args import ResolveStaleArgs
+    from rka.mcp.operations_schema import OPERATIONS_SCHEMA
+    import rka.mcp.server as server
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", json={"content": "source"}, headers=headers)).json()
+    claim = (await mcp_env.post("/api/claims", json={"content": "finding", "source_entry_id": note["id"], "claim_type": "evidence"}, headers=headers)).json()
+    flagged = await mcp_env.post("/api/freshness/flag-stale", json={"entity_id": claim["id"], "reason": "new evidence"}, headers=headers)
+    assert flagged.status_code == 200
+    args = ResolveStaleArgs(project_id="proj_default", entity_id=claim["id"], verdict="historical", resolution="reviewed", resolved_by="pi", journal_id=note["id"])
+    receipt = json.loads(await dispatch_execute_typed(args))
+    assert receipt["staleness_verdict"] == "historical"
+    assert not receipt["currentness"]["is_current"]
+    assert await server.rka_resolve_stale(**args.model_dump(exclude={"operation"})) == receipt
+    stored = (await mcp_env.get(f"/api/claims/{claim['id']}", headers=headers)).json()
+    assert stored["staleness_resolution_journal_id"] == note["id"]
+    rejected = await mcp_env.put(f"/api/claims/{claim['id']}", json={"stale": False}, headers=headers)
+    assert rejected.status_code == 422
+    assert "resolve_stale" in OPERATIONS_SCHEMA
+
+
+@pytest.mark.asyncio
+async def test_i5_typed_dependency_declaration_roundtrip(mcp_env):
+    from rka.mcp.operation_args import RecordDirectiveDependencyArgs
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", json={"content": "conditional directive", "type": "directive"}, headers=headers)).json()
+    decision = (await mcp_env.post("/api/decisions", json={"question": "choice", "chosen": "selected", "rationale": "reason", "decided_by": "brain", "phase": "implementation"}, headers=headers)).json()
+    args = RecordDirectiveDependencyArgs(project_id="proj_default", directive_id=note["id"], decision_id=decision["id"], declared_by="pi", reason="only while this decision applies")
+    first = json.loads(await dispatch_execute_typed(args))
+    assert json.loads(await dispatch_execute_typed(args)) == first
+    rows = (await mcp_env.get(f"/api/notes/{note['id']}/dependencies", headers=headers)).json()
+    assert rows == [first]
+
+
+async def test_i4_list_and_research_map_render_inactive_dispositions(mcp_env):
+    import rka.mcp.server as server
+
+    headers = {"X-RKA-Project": "proj_default"}
+    note = (await mcp_env.post("/api/notes", headers=headers, json={"content": "currency source"})).json()
+    claim = (await mcp_env.post("/api/claims", headers=headers, json={"source_entry_id": note["id"], "content": "retained evidence", "claim_type": "evidence"})).json()
+    cluster = (await mcp_env.post("/api/clusters", headers=headers, json={"label": "retained cluster"})).json()
+    for entity in (claim, cluster):
+        response = await mcp_env.post("/api/freshness/flag-stale", headers=headers, json={"entity_id": entity["id"], "reason": "review"})
+        assert response.status_code == 200, response.text
+        response = await mcp_env.post("/api/freshness/resolve-stale", headers=headers, json={"entity_id": entity["id"], "verdict": "historical", "resolution": "retained, not current", "resolved_by": "pi"})
+        assert response.status_code == 200, response.text
+    for rendered in (
+        await server.rka_get_claims(project_id="proj_default"),
+        await server.rka_list_clusters(project_id="proj_default"),
+        await server.rka_get_research_map(project_id="proj_default"),
+    ):
+        assert "NOT CURRENT" in rendered and "historical" in rendered
+    graph = (await mcp_env.get("/api/research-map", headers=headers)).json()
+    assert graph["unassigned_clusters"][0]["currentness"]["is_current"] is False
+
+
+async def test_i7_public_checkpoint_and_report_conflicts_do_not_duplicate(mcp_env):
+    headers = {"X-RKA-Project": "proj_default"}
+    response = await mcp_env.post("/api/missions", headers=headers, json={"objective": "public lifecycle", "phase": "implementation"})
+    assert response.status_code == 201, response.text
+    mission = response.json()
+    response = await mcp_env.post("/api/checkpoints", headers=headers, json={"mission_id": mission["id"], "type": "decision", "description": "approve"})
+    assert response.status_code == 201, response.text
+    checkpoint = response.json()
+    url = f"/api/checkpoints/{checkpoint['id']}/resolve"
+    resolution = {"resolution": "accepted", "resolved_by": "pi", "rationale": "reviewed", "create_decision": True}
+    first = await mcp_env.put(url, headers=headers, json=resolution)
+    assert first.status_code == 200, first.text
+    retry = await mcp_env.put(url, headers=headers, json=resolution)
+    assert retry.json() == first.json()
+    conflict = await mcp_env.put(url, headers=headers, json={**resolution, "resolution": "changed"})
+    assert conflict.status_code == 409
+    assert len((await mcp_env.get("/api/decisions", headers=headers)).json()) == 1
+    report_url = f"/api/missions/{mission['id']}/report"
+    report = {"summary": "done", "findings": ["one finding"]}
+    first = await mcp_env.post(report_url, headers=headers, json=report)
+    assert first.status_code == 200, first.text
+    assert (await mcp_env.post(report_url, headers=headers, json=report)).json() == first.json()
+    assert (await mcp_env.post(report_url, headers=headers, json={**report, "summary": "overwrite"})).status_code == 409
+    assert len((await mcp_env.get("/api/notes", headers=headers)).json()) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["rest", "typed", "legacy", "bulk"])
 async def test_journal_update_audit_is_readable_after_every_public_path(mcp_env, surface):
     import rka.mcp.server as mcp_server
