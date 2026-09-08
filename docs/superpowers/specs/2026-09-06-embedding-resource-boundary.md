@@ -5,6 +5,11 @@
 - Parent: [approved hardening design](2026-09-05-core-hardening-design.md).
 - Scope: resource admission, batch planning, cancellation ownership, oversized-row
   isolation and paged legacy hash inspection. E1b owns durable backfill scheduling.
+- Historical E1a specification. E-series completion supersedes its native
+  executor/caps: spawn-isolated FastEmbed now uses effective 2 KiB input and
+  4 KiB batch/padding ceilings after real-model testing reproduced OOM at the
+  earlier 8 KiB boundary. HTTP limits and document-space identity are unchanged.
+  See [current operator documentation](../../embedding_backends.md#resource-limits-unreleased-hardening).
 
 ## Frozen acceptance for this slice
 

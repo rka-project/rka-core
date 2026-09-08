@@ -14,6 +14,7 @@ from typing import AsyncIterator
 import aiosqlite
 
 from rka.infra.file_lock import release_exclusive, try_acquire_exclusive
+from rka.infra.runtime_lease import RuntimeLease, canonical_path, finish_before_cancellation
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 class Database:
     """Async SQLite database wrapper."""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, *, maintenance_lease: RuntimeLease | None = None):
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
         self._vec_loaded = False
@@ -34,9 +35,33 @@ class Database:
         self._transaction_depth = 0
         self._savepoint_counter = 0
         self._phase2_memory_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._runtime_lease: RuntimeLease | None = None
+        self._maintenance_lease = maintenance_lease
+        self._maintenance_registered = False
 
     async def connect(self) -> None:
         """Open database connection and apply PRAGMAs."""
+        async with self._lifecycle_lock:
+            await self._connect_with_lease()
+
+    async def _connect_with_lease(self) -> None:
+        if self._conn is not None or self._runtime_lease is not None:
+            raise RuntimeError("database already connected")
+        if self.db_path != ":memory:":
+            self.db_path = str(canonical_path(self.db_path))
+            if self._maintenance_lease is not None:
+                self._maintenance_lease.retain_connection(self.db_path)
+                self._maintenance_registered = True
+            else:
+                self._runtime_lease = RuntimeLease(self.db_path).acquire()
+        try:
+            await finish_before_cancellation(self._connect())
+        except BaseException:
+            await finish_before_cancellation(self._close())
+            raise
+
+    async def _connect(self) -> None:
         db_file: Path | None = None
         if self.db_path != ":memory:" and not self.db_path.startswith("file:"):
             db_file = Path(self.db_path).expanduser()
@@ -78,9 +103,23 @@ class Database:
 
     async def close(self) -> None:
         """Close database connection."""
+        await finish_before_cancellation(self._close_serialized())
+
+    async def _close_serialized(self) -> None:
+        async with self._lifecycle_lock:
+            await self._close()
+
+    async def _close(self) -> None:
         if self._conn:
             await self._conn.close()
             self._conn = None
+        # On a close failure keep the lease: an old schema handle may survive.
+        if self._runtime_lease is not None:
+            self._runtime_lease.close()
+            self._runtime_lease = None
+        if self._maintenance_registered:
+            self._maintenance_lease.release_connection()
+            self._maintenance_registered = False
 
     async def initialize_schema(self) -> None:
         """Create tables from schema.sql if they don't exist, then run migrations."""

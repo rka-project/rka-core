@@ -202,7 +202,7 @@ async def test_legacy_vector_metadata_pair_without_source_forces_rebuild(db) -> 
 
 
 @pytest.mark.asyncio
-async def test_stale_hash_legacy_index_is_rebuilt_instead_of_adopted(
+async def test_stale_hash_legacy_pair_is_invalidated_during_adoption(
     db,
 ) -> None:
     cfg = _config("model-a")
@@ -225,12 +225,18 @@ async def test_stale_hash_legacy_index_is_rebuilt_instead_of_adopted(
         dim=768,
     )
 
-    assert result.transitioned is True
-    assert result.resumed is False
+    assert result.transitioned is False
+    assert result.resumed is True
     assert result.state.status == "reindexing"
     assert await db.fetchone(
         "SELECT id FROM vec_claims WHERE id = 'clm_generation'"
     ) is None
+    assert await db.fetchone(
+        "SELECT entity_id FROM embedding_metadata WHERE entity_id = 'clm_generation'"
+    ) is None
+    assert (await db.fetchone("SELECT embedding_pending FROM claims WHERE id = 'clm_generation'"))[
+        "embedding_pending"
+    ] == 1
 
 
 @pytest.mark.asyncio

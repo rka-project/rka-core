@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import stat
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -71,10 +71,28 @@ _WRITER_MIGRATION_TARGET = "https://github.com/rka-project/rka-writer"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize and tear down database + Phase 2 services on startup/shutdown."""
-    config: RKAConfig = app.state.config
+    db = Database(app.state.config.database_url)
     background_tasks: list[asyncio.Task] = []
+    try:
+        async with _connected_lifespan(app, db, background_tasks):
+            yield
+    finally:
+        # Includes failed startup and cancellation, before releasing DB leases.
+        from rka.infra.runtime_lease import finish_before_cancellation
+        async def cleanup():
+            try:
+                for task in background_tasks:
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*background_tasks, return_exceptions=True)
+            finally:
+                await db.close()
+        await finish_before_cancellation(cleanup())
 
-    db = Database(config.database_url)
+
+@asynccontextmanager
+async def _connected_lifespan(app, db, background_tasks):
+    config: RKAConfig = app.state.config
     await db.connect()
     await db.initialize_schema()
     await db.initialize_phase2_schema()
@@ -265,14 +283,6 @@ async def lifespan(app: FastAPI):
     )
 
     yield
-
-    for task in background_tasks:
-        if not task.done():
-            task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
-
-    await db.close()
 
 
 def create_app(config: RKAConfig | None = None) -> FastAPI:

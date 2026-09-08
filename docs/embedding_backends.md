@@ -88,15 +88,23 @@ request. Single embeddings, queries, batches and connection probes use the same
 limits. **Oversized input is rejected, not silently truncated.** Canonical source
 text is unchanged. This intentionally tightens compatibility for long documents.
 
-| `config.resource_limits` key | Default and maximum |
-|---|---:|
-| `max_input_bytes` | 8192 |
-| `max_batch_inputs` | 8 |
-| `max_batch_bytes` | 16384 |
-| `max_padding_bytes` | 16384 |
-| `max_call_inputs` | 128 |
-| `max_call_bytes` | 262144 |
-| `call_timeout_seconds` | 120 |
+| `config.resource_limits` key | HTTP default/maximum | FastEmbed effective ceiling |
+|---|---:|---:|
+| `max_input_bytes` | 8192 | 2048 |
+| `max_batch_inputs` | 8 | 8 |
+| `max_batch_bytes` | 16384 | 4096 |
+| `max_padding_bytes` | 16384 | 4096 |
+| `max_call_inputs` | 128 | 128 |
+| `max_call_bytes` | 262144 | 262144 |
+| `call_timeout_seconds` | 120 | 120 |
+
+FastEmbed applies the smaller of the saved limit and its native ceiling. Existing
+valid saved generic limits remain loadable but cannot raise these native caps.
+A default-model real-inference test showed that the prior 8 KiB native input
+ceiling could still OOM a 2 GiB container. The tighter native ceilings reject that
+input before inference; no source text is truncated or re-encoded. These are
+measured defaults for the supported model, not a memory guarantee for every ONNX
+model, tokenizer, thread setting or host.
 
 These are UTF-8 **byte budgets, not token counts or memory limits**. Prefixes and
 templates count toward the input limit. Padding cost is conservatively represented
@@ -107,7 +115,7 @@ maximum-sized inputs per fetch with the default budgets. Legacy hash inspection
 uses keyset pages of eight rows; it no longer loads the entire corpus at once.
 
 The optional nested object can only tighten these limits. For example, add
-`"resource_limits": {"max_input_bytes": 4096, "call_timeout_seconds": 60}` inside
+`"resource_limits": {"max_input_bytes": 1024, "call_timeout_seconds": 60}` inside
 `config`. Limits must be positive, within the maxima above and consistent
 (input ≤ batch bytes ≤ call bytes, input ≤ padding bytes, batch count ≤ call count).
 Unknown resource-limit keys and booleans are rejected. These advanced settings
@@ -119,8 +127,10 @@ switching backend kinds starts a new config, so reapply any tighter limits then.
 Only one provider call is admitted **per process**, across backend instances.
 There is no in-memory waiting queue. HTTP logical-call deadlines include all
 requests and retries, and use the smaller of `timeout_seconds` and
-`call_timeout_seconds`. FastEmbed uses a dedicated single-thread executor; a
-cancelled or timed-out caller does not release admission until native work ends.
+`call_timeout_seconds`. FastEmbed uses one reusable **spawned inference child**
+per API/worker process. Model changes replace/reap the child; timeout/cancellation
+terminates it before admission becomes reusable. Database descriptors are not
+inherited, and the child exits when its parent dies.
 
 - `embedding_input_limit`: a row is too large or a call exceeds its budget.
   Backfill leaves that row pending, reports failure and continues with valid rows.
@@ -129,13 +139,17 @@ cancelled or timed-out caller does not release admission until native work ends.
   unchanged oversized input will not become embeddable merely by retrying it.
 - `embedding_resource_busy`: another inference is active; retry later. Busy or
   input rejection does not itself mark a reachable provider unavailable.
-- `embedding_call_timeout`: the whole-call deadline expired. A timeout is not a
-  guarantee that ONNX or a remote server stopped computing.
+- `embedding_call_timeout`: the whole-call deadline expired. Core terminates its
+  native child; it cannot guarantee a remote HTTP provider stopped computing.
+- `embedding_native_failed`: a native child failed to load/infer or exited.
+  Durable jobs retain finite retry/exhaustion behavior; the next call can start
+  a fresh child. Do not treat this as an instruction to repeatedly restart API.
 
-This is not a hard RSS sandbox or a cross-process inference lock. A hung native
-call can keep admission busy. Startup/config/manual backfills now use the durable
-worker lifecycle below. Chunking/truncation and offline re-indexing still need
-separate encoding and migration decisions. See the
+This is not a hard RSS sandbox or a cross-process inference lock. Container/OS
+supervision still supplies memory limits. Startup/config/manual backfills use
+the durable worker lifecycle below. Chunking/truncation remains a separate
+encoding decision; [offline recovery](embedding-inspection.md#offline-rebuild-interrupted-recovery-and-rollback)
+now provides backed-up schema/config transitions. See the
 [E1a design](superpowers/specs/2026-09-06-embedding-resource-boundary.md).
 
 ## Durable backfill lifecycle (unreleased hardening)
@@ -207,9 +221,11 @@ declare the global generation ready; run the normal all-types backfill to fill
 remaining gaps. Scoped import status exposes this distinction through
 `semantic_ready=false` and `index_state=reindexing`.
 
-This is not the E2 offline recovery/space-change command. Full native-inference
-process isolation, real-model memory limits, shared input/hash recipes and offline
-dimension maintenance remain release gates. See the
+This compatibility entrypoint is not the E2 offline space-change command.
+For cross-dimension changes use the [offline operator workflow](embedding-inspection.md).
+All seven document/hash recipes are shared, and native inference is process-isolated.
+Real-model measurements apply only to the measured configuration/corpus, not all
+models and memory caps. See the
 [E1b design](superpowers/specs/2026-09-06-durable-embedding-backfill.md) and
 [entry-point design](superpowers/specs/2026-09-07-backfill-entrypoint-unification.md).
 
@@ -244,8 +260,9 @@ This repair does not rescan same-model metadata for changed content; failed
 edit jobs remain visible in the durable job queue and must be retried.
 
 A populated index cannot change vector dimension online. Core returns
-`409 embedding_offline_reindex_required`; a supervisor must stop API and
-worker peers, perform the resize/full re-index, and restart them.
+`409 embedding_offline_reindex_required`; stop API and worker peers, follow
+[`rka admin embedding rebuild`](embedding-inspection.md#offline-rebuild-interrupted-recovery-and-rollback),
+then restart them for durable worker backfill. Keep the verified recovery copy.
 
 ## Troubleshooting
 

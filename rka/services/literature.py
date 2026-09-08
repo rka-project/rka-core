@@ -326,8 +326,9 @@ class LiteratureService(BaseService):
         if not self.embeddings:
             return {"outcome": "skipped", "reason": "embeddings_disabled"}
 
-        parts = [str(row.get("title") or "").strip(), str(row.get("abstract") or "").strip()]
-        text = " ".join(part for part in parts if part).strip()
+        from rka.infra.embedding_documents import compose_document
+
+        text = compose_document("literature", row)
         if not text:
             return {"outcome": "skipped", "reason": "empty"}
 

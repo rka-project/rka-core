@@ -29,6 +29,16 @@ active product, dependency, or roadmap track.
 | RKA App Foundation 0 | Implementation candidate under review | Merge and pin the first released Core image by digest. |
 | RKA Writer | W0 design phase | Ratify the Authoring IR and validate one fully traceable paragraph. |
 
+Core audit-remediation E2 includes
+[E2a document parity and conservative legacy adoption](docs/superpowers/specs/2026-09-07-embedding-index-recovery.md).
+It now implements [inspection, lifetime admission, backed-up offline transition,
+resume and rollback](docs/embedding-inspection.md). Native FastEmbed inference is
+isolated in a supervised child. Offline transition queues the existing durable
+worker; it does not claim completed inference or deployment. Cross-platform CI
+and the E-series acceptance evidence gate the PR merge. This is distinct from
+the completed Core-separation E0-E2 program above; I3-I7 and R1-R3 remain separate.
+See [E-series validation and explicit limits](docs/superpowers/plans/2026-09-07-core-e-completion-validation.md).
+
 The pre-rebaseline roadmap, including the completed Workbench program, is
 preserved in
 [`docs/history/rka-roadmap-pre-rebaseline-2026-09-03.md`](docs/history/rka-roadmap-pre-rebaseline-2026-09-03.md).

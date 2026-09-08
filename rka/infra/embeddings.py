@@ -17,11 +17,11 @@ Construction modes:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
 from rka.infra.embedding_backends import EmbeddingBackend, make_backend
+from rka.infra.embedding_documents import embedding_content_hash
 from rka.infra.embedding_resources import EmbeddingCallTimeout, EmbeddingResourceError
 
 if TYPE_CHECKING:
@@ -203,11 +203,7 @@ class EmbeddingService:
     @staticmethod
     def content_hash(content: str | bytes) -> str:
         """Hash content to detect changes for re-embedding."""
-        if isinstance(content, bytes):
-            raw = content
-        else:
-            raw = content.encode()
-        return hashlib.sha256(raw).hexdigest()[:16]
+        return embedding_content_hash(content)
 
     async def needs_reembed(
         self,

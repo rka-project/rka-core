@@ -15,13 +15,14 @@ from __future__ import annotations
 import logging
 import os
 import time
+import threading
 from typing import Any
 
 from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
     reconcile_dim,
 )
-from rka.infra.embedding_resources import EmbeddingResourceLimits, run_native
+from rka.infra.embedding_resources import native_resource_limits, run_native
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def _needs_nomic_prefix(model_name: str) -> bool:
 
 
 class FastEmbedBackend:
-    """In-process ONNX inference via the `fastembed` package."""
+    """Spawn-isolated ONNX inference via the `fastembed` package."""
 
     def __init__(
         self,
@@ -56,7 +57,7 @@ class FastEmbedBackend:
         resource_limits: dict | None = None,
     ) -> None:
         self._model_name = model_name
-        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
+        self.resource_limits = native_resource_limits(resource_limits)
         self._model: Any = None
         # If `dim` is provided, that becomes the strict expectation enforced
         # by `reconcile_dim`. If omitted (None), default to nomic-v1.5's 768
@@ -141,13 +142,32 @@ class FastEmbedBackend:
         if not texts:
             return []
         batches = self.resource_limits.plan(texts, lambda t: self._prefix(t, is_query=is_query))
-        return await run_native(
-            lambda: self._sync_embed_batches(batches),
-            timeout=self.resource_limits.call_timeout_seconds,
-        )
+        if self._model is not None:
+            # Private compatibility seam for explicitly injected in-process
+            # models. No persisted configuration can select this path.
+            return await run_native(lambda: self._sync_embed_batches(batches),
+                                    timeout=self.resource_limits.call_timeout_seconds)
+        from rka.infra.native_embedding_process import NATIVE_PROCESS
+        options = {"model_name": self._model_name, "threads": self._threads}
+        if self._cache_dir:
+            options["cache_dir"] = self._cache_dir
+        cancelled = threading.Event()
+        try:
+            vectors = await run_native(
+                lambda: NATIVE_PROCESS.call(options, batches,
+                                           timeout=self.resource_limits.call_timeout_seconds, cancelled=cancelled),
+                timeout=self.resource_limits.call_timeout_seconds,
+            )
+            if len(vectors) != len(texts):
+                raise ValueError("native vector count mismatch")
+            for vector in vectors:
+                self._dim = reconcile_dim(self._dim, len(vector))
+            return vectors
+        finally:
+            cancelled.set()
 
     async def test_connection(self) -> ConnectionTestResult:
-        # FastEmbed runs in-process; "test" means: can we load the model
+        # FastEmbed runs in a child; "test" means: can we load the model
         # + run a single embed?
         t0 = time.perf_counter()
         try:

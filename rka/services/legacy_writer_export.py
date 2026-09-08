@@ -23,7 +23,7 @@ from rka import __version__
 from rka.infra.sqlite_backup import (
     fsync_directory,
     fsync_file,
-    protected_sqlite_runtime_paths,
+    is_protected_sqlite_path,
 )
 
 
@@ -202,7 +202,7 @@ def export_legacy_writer_bundle(
         raise LegacyWriterExportError("project_id cannot be empty")
     if not source_path.is_file():
         raise LegacyWriterExportError(f"SQLite snapshot not found: {source_path}")
-    if output_path in protected_sqlite_runtime_paths(source_path):
+    if is_protected_sqlite_path(source_path, output_path):
         raise LegacyWriterExportError("Writer export must not replace the source database")
 
     runtime_sidecars = [
@@ -286,6 +286,12 @@ def _read_snapshot(
     *,
     source_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, bytes]]:
+    from rka.infra.runtime_lease import RuntimeLease
+    with RuntimeLease(source_path):
+        return _read_snapshot_locked(source_path, project_id, source_sha256=source_sha256)
+
+
+def _read_snapshot_locked(source_path, project_id, *, source_sha256):
     source_uri = f"{source_path.as_uri()}?mode=ro&immutable=1"
     try:
         connection = sqlite3.connect(source_uri, uri=True, timeout=30)

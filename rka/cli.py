@@ -174,10 +174,9 @@ def worker(
     async def _worker():
         db = Database(config.database_url)
         await db.connect()
-        await db.initialize_schema()
-        await db.initialize_phase2_schema()
-
         try:
+            await db.initialize_schema()
+            await db.initialize_phase2_schema()
             # v2.5.8 (mis_01KS3E4S33B13EGR2NWRQM2QG4 T2; Brain-ratified
             # exemption-extension): use EnrichmentWorker.boot() so the
             # worker reads persisted /data/embedding_config.json rather
@@ -789,6 +788,11 @@ def periodic_hooks(project_ids: tuple[str, ...]):
 def admin():
     """Admin/maintenance commands (CLI-only, not exposed via MCP)."""
     pass
+
+
+from rka.cli_embedding import embedding_admin as _embedding_admin  # noqa: E402
+
+admin.add_command(_embedding_admin)
 
 
 @admin.command("list-orphan-supersedes")
