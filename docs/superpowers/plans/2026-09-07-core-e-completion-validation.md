@@ -99,6 +99,9 @@ unembedded/preserved; the other **3612** rows are within the final native ceilin
 
 - Initial full regression caught the admission directory creating a DB parent
   with 0755 instead of 0700. Corrected creation order; retained the original test.
+- Final adversarial close-order review reproduced close racing with an in-flight
+  connect, which could release admission early. A per-instance lifecycle lock
+  now serializes connect/close; regressions also reject concurrent duplicate open.
 - First disposable API used the dependency image's `/app` working directory and
   accidentally imported old source. Stopped only those test containers, retained
   their volume, and reran on a new volume with `/work` and verified module path.

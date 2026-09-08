@@ -35,12 +35,17 @@ class Database:
         self._transaction_depth = 0
         self._savepoint_counter = 0
         self._phase2_memory_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
         self._runtime_lease: RuntimeLease | None = None
         self._maintenance_lease = maintenance_lease
 
     async def connect(self) -> None:
         """Open database connection and apply PRAGMAs."""
-        if self._conn is not None:
+        async with self._lifecycle_lock:
+            await self._connect_with_lease()
+
+    async def _connect_with_lease(self) -> None:
+        if self._conn is not None or self._runtime_lease is not None:
             raise RuntimeError("database already connected")
         if self.db_path != ":memory:":
             self.db_path = str(canonical_path(self.db_path))
@@ -51,7 +56,7 @@ class Database:
         try:
             await finish_before_cancellation(self._connect())
         except BaseException:
-            await self.close()
+            await finish_before_cancellation(self._close())
             raise
 
     async def _connect(self) -> None:
@@ -96,7 +101,11 @@ class Database:
 
     async def close(self) -> None:
         """Close database connection."""
-        await finish_before_cancellation(self._close())
+        await finish_before_cancellation(self._close_serialized())
+
+    async def _close_serialized(self) -> None:
+        async with self._lifecycle_lock:
+            await self._close()
 
     async def _close(self) -> None:
         if self._conn:

@@ -201,3 +201,44 @@ async def test_cancel_during_open_waits_for_connection_and_closes_it(tmp_path, m
     assert db._conn is None
     with RuntimeLease(path, maintenance=True):
         pass
+
+
+@pytest.mark.asyncio
+async def test_close_cannot_release_lease_while_connect_is_in_flight(tmp_path, monkeypatch):
+    path = tmp_path / "db.sqlite"
+    db = Database(str(path))
+    original = db._connect
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def delayed():
+        entered.set()
+        await release.wait()
+        await original()
+    monkeypatch.setattr(db, "_connect", delayed)
+    opening = asyncio.create_task(db.connect())
+    await entered.wait()
+    closing = asyncio.create_task(db.close())
+    try:
+        await asyncio.sleep(0.02)
+        with pytest.raises(MaintenanceBusy):
+            RuntimeLease(path, maintenance=True).acquire().close()
+    finally:
+        release.set()
+        await asyncio.gather(opening, closing)
+        await db.close()
+    assert db._conn is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_connect_does_not_replace_a_live_connection(tmp_path):
+    path = tmp_path / "db.sqlite"
+    db = Database(str(path))
+    results = await asyncio.gather(db.connect(), db.connect(), return_exceptions=True)
+    try:
+        assert sum(isinstance(result, RuntimeError) for result in results) == 1
+        assert sum(result is None for result in results) == 1
+        with pytest.raises(MaintenanceBusy):
+            RuntimeLease(path, maintenance=True).acquire()
+    finally:
+        await db.close()
+    with RuntimeLease(path, maintenance=True):
+        pass
