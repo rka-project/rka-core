@@ -114,6 +114,13 @@ unembedded/preserved; the other **3612** rows are within the final native ceilin
   failure now prevents even the maintenance gate's context exit from unlocking
   a still-open schema handle. This extends the same fail-closed rule to inspection
   connections used inside maintenance, not only ordinary runtime slots.
+- Windows job-log review caught a false-green CI result: pytest's generated ID
+  for a 64 KiB malformed config exceeded the Windows environment-variable limit,
+  while PowerShell let later successful commands hide that earlier error. Short
+  explicit parameter IDs keep the full oversized fixture, and the native matrix
+  now uses explicit fail-fast Bash on all OSes, with a workflow regression guard.
+  The affected green jobs are not accepted as a passing native gate; the corrected
+  revision must pass every command in the matrix again.
 - First disposable API used the dependency image's `/app` working directory and
   accidentally imported old source. Stopped only those test containers, retained
   their volume, and reran on a new volume with `/work` and verified module path.

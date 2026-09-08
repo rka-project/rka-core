@@ -85,6 +85,12 @@ jobs:
         run: python scripts/core_startup_smoke.py --require-web --require-vec
 
   wheel-smoke:
+    # Explicit bash enables -e/pipefail on every OS, including Git Bash on
+    # Windows. PowerShell otherwise lets an earlier native-command failure
+    # disappear behind the last successful command in a multi-command step.
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:

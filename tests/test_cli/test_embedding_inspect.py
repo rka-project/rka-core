@@ -128,6 +128,9 @@ async def test_candidate_config_previews_global_impact_without_saving(db, change
     '{"backend":"openai_compat","config":{"model":"test","dim":768,"document_template":"private-template"}}',
     'private malformed config',
     'x' * 65537,
+], ids=[
+    "unknown-backend", "boolean-dimension", "zero-dimension", "string-dimension",
+    "missing-dimension", "invalid-document-template", "malformed-json", "oversized-config",
 ])
 async def test_bad_config_is_explicit_and_errors_do_not_echo_private_fields(db, payload):
     await setup_store(db)
