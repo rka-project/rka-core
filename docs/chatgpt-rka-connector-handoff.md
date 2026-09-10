@@ -1,5 +1,9 @@
 # ChatGPT RKA Connector Handoff
 
+> **Historical only — superseded for Core 3.0.0 on 2026-09-10.**
+> Do not execute the launch recipes below. HTTP/SSE MCP, OAuth proxy and tunnel
+> scripts are now disabled. See [remote access status](REMOTE_ACCESS.md).
+
 Date: 2026-07-06
 
 This document summarizes the conversation, decisions, implementation work, current repo state, and remaining steps for wiring local RKA into ChatGPT as a secure MCP connector.

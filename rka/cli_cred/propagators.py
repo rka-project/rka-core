@@ -244,7 +244,7 @@ def propagate_rka_server(
     creds: dict[str, str],
     *,
     apply: bool,
-    api_url: str = "http://localhost:9712",
+    api_url: str = "http://127.0.0.1:9712",
     http_client=None,
 ) -> PropagationResult:
     """PUT /api/config/zotero with creds.env values.

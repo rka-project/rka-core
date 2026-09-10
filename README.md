@@ -64,7 +64,7 @@ RKA coordinates three roles around one shared, typed knowledge base:
 - **Executor** — performs bounded implementation or experimental missions, records findings, and raises checkpoints when assumptions or scope require review.
 - **RKA** — stores the shared record, provenance graph, lifecycle state, and auditable handoffs between them.
 
-The roles are architectural responsibilities, not requirements to use one particular model. RKA exposes its capabilities through MCP and REST. The reference workflows are currently tested most extensively with Claude Desktop and Claude Code; ChatGPT can connect through the authenticated HTTP MCP path.
+The roles are architectural responsibilities, not requirements to use one particular model. RKA exposes its capabilities through MCP and REST. The reference workflows are currently tested most extensively with Claude Desktop and Claude Code; Codex and other local clients use STDIO MCP. Remote HTTP MCP and ChatGPT connectors are deferred in Core 3.0.0; see [the access boundary](docs/REMOTE_ACCESS.md).
 
 ### Progressive crystallization
 
@@ -163,7 +163,7 @@ Prerequisites: Git, Python 3, [uv](https://docs.astral.sh/uv/getting-started/ins
 macOS or Linux:
 
 ```bash
-git clone https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
 cd rka-core
 docker compose up -d
 uv tool install --force --reinstall .
@@ -176,7 +176,7 @@ Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Code" | Out-Null
 Set-Location "$env:USERPROFILE\Code"
-git clone https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
 Set-Location rka-core
 docker compose up -d
 uv tool install --force --reinstall .
@@ -208,7 +208,7 @@ For a complete first-project walkthrough, see [USAGE_GUIDE.md](USAGE_GUIDE.md).
 | **MCP** | AI-assisted research retrieval, maintenance, and execution workflows | [Installation](INSTALL.md), [Technical Reference](docs/TECHNICAL_REFERENCE.md) |
 | **CLI** | Starting services, status, backup, credentials, and workspace bootstrap | [Technical Reference](docs/TECHNICAL_REFERENCE.md) |
 | **REST API** | Custom integrations and application development | [Technical Reference](docs/TECHNICAL_REFERENCE.md), live `/docs` |
-| **ChatGPT connector** | Authenticated access from ChatGPT to a local RKA instance | [Connector Guide](docs/CHATGPT_CONNECTOR.md) |
+| **Remote connectors** | Deferred; unsupported in Core 3.0.0 | [Access boundary](docs/REMOTE_ACCESS.md) |
 | **Writer (separate project)** | Researcher-controlled authoring graph and convergence workbench using RKA's public contract | [`rka-project/rka-writer`](https://github.com/rka-project/rka-writer) |
 | **App (separate project)** | Installation, lifecycle supervision, and optional user-owned deployment adapters | [`rka-project/rka-app`](https://github.com/rka-project/rka-app) |
 
@@ -275,7 +275,7 @@ RKA is being developed for research workflows at UNC Charlotte. Feedback, compar
 | [Roadmap](ROADMAP.md) | Active Core, App/access, Writer, and integration tracks with dependency-ordered exit gates |
 | [Embedding Backends](docs/embedding_backends.md) | Local and OpenAI-compatible embedding configuration |
 | [Credential Vault](docs/CRED_VAULT.md) | Secure credential storage and propagation |
-| [ChatGPT Connector](docs/CHATGPT_CONNECTOR.md) | Authenticated remote MCP access |
+| [Remote access status](docs/REMOTE_ACCESS.md) | Local-only release boundary and deferred connectors |
 | [Changelog](CHANGELOG.md) | Release history and compatibility notes |
 
 ## Development

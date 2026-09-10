@@ -174,7 +174,7 @@ def probe_claude_code_json(creds: dict[str, str], config_path: Path | None = Non
 
 def probe_rka_server_zotero(
     creds: dict[str, str],
-    api_url: str = "http://localhost:9712",
+    api_url: str = "http://127.0.0.1:9712",
     http_client=None,
 ) -> ProbeResult:
     name = "rka_server_zotero"
@@ -383,7 +383,7 @@ def probe_rka_orchestrator_env(creds: dict[str, str]) -> ProbeResult:
 # ----------------------------------------------------------------------
 
 
-_RKA_VERSION_RE = re.compile(r"rka,\s+version\s+(\S+)")
+_RKA_VERSION_RE = re.compile(r"\brka(?:\.exe)?,\s+version\s+(\S+)")
 
 
 def probe_host_rka_version(versions: Versions) -> ProbeResult:
@@ -406,7 +406,7 @@ def probe_host_rka_version(versions: Versions) -> ProbeResult:
             status=PROBE_FAIL,
             expected=expected,
             found="rka CLI not in PATH",
-            hint="UV_CACHE_DIR=/tmp/uv-cache uv tool install --force .",
+            hint="uv tool install --force --reinstall .",
         )
     if result.returncode != 0:
         return ProbeResult(
@@ -430,7 +430,7 @@ def probe_host_rka_version(versions: Versions) -> ProbeResult:
             status=PROBE_FAIL,
             expected=expected,
             found=actual,
-            hint="UV_CACHE_DIR=/tmp/uv-cache uv tool install --force .",
+            hint="uv tool install --force --reinstall .",
         )
     return ProbeResult(name=name, status=PROBE_PASS, expected=expected, found=actual)
 
@@ -442,7 +442,7 @@ def probe_host_rka_version(versions: Versions) -> ProbeResult:
 
 def probe_rka_server_health(
     versions: Versions,
-    api_url: str = "http://localhost:9712",
+    api_url: str = "http://127.0.0.1:9712",
     http_client=None,
 ) -> ProbeResult:
     name = "rka_server_health"
@@ -581,7 +581,7 @@ def run_all_probes(
     versions: Versions,
     creds: dict[str, str],
     *,
-    api_url: str = "http://localhost:9712",
+    api_url: str = "http://127.0.0.1:9712",
     http_client=None,
     claude_desktop_path: Path | None = None,
     claude_code_path: Path | None = None,

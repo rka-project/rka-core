@@ -322,7 +322,10 @@ To find your project id: run `rka_query(args={"operation": "list_projects"})` in
 
 ### 5.4 — Using RKA from ChatGPT (Custom Connector)
 
-RKA can also be reached from ChatGPT as a custom MCP connector. The path: start the MCP server in HTTP mode on `127.0.0.1:9713` with `RKA_SKILL_TOOLS=1` (which exposes the 8-tool skill surface), front it with the OAuth reverse proxy (`scripts/rka_mcp_oauth_proxy.py`) on `127.0.0.1:9720`, expose that over HTTPS with an ngrok tunnel, then register the tunnel URL as the ChatGPT connector **Server URL** (`https://<ngrok-host>/mcp`) and authenticate over OAuth. Only the MCP server is exposed — the web UI stays private and is never tunneled, and your OAuth passphrase and API keys stay on your machine. See [`CHATGPT_CONNECTOR.md`](CHATGPT_CONNECTOR.md) for the full step-by-step setup.
+Remote ChatGPT connectors are deferred in Core 3.0.0. HTTP/SSE MCP, the legacy
+OAuth proxy and tunnel launcher are disabled. Use local STDIO with Codex or
+Claude Code and keep the REST API on host loopback. See
+[the supported access boundary](REMOTE_ACCESS.md).
 
 ---
 

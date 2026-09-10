@@ -32,7 +32,7 @@ def _configure_console_output() -> None:
 
 
 @click.group()
-@click.version_option(version=__version__)
+@click.version_option(version=__version__, prog_name="rka")
 def main():
     """Research Knowledge Agent — AI-assisted research orchestration."""
     _configure_console_output()
@@ -123,34 +123,31 @@ def serve(host: str | None, port: int | None, do_reload: bool):
     "--transport",
     type=click.Choice(["stdio", "http"], case_sensitive=False),
     default=None,
-    help="Transport mode: stdio (default, for Claude Desktop / Claude Code) or http (Streamable HTTP, dev/remote access).",
+    help="Transport mode: stdio (default). The legacy http option is disabled in Core 3.0.0.",
 )
-@click.option("--host", default="127.0.0.1", help="Host for HTTP transport only.")
-@click.option("--port", default=9713, type=int, help="Port for HTTP transport only. Default 9713 (avoids REST API port 9712).")
+@click.option("--host", default="127.0.0.1", help="Legacy HTTP option; remote transport is disabled.")
+@click.option("--port", default=9713, type=int, help="Legacy HTTP option; remote transport is disabled.")
 def mcp(transport: str | None, host: str, port: int):
     """Start the MCP server.
 
-    Defaults to stdio transport (Claude Desktop spawns this as a subprocess).
-    HTTP transport is opt-in via --transport http or RKA_MCP_TRANSPORT=http
-    for dev, remote access, or mitmproxy-based debugging.
+    Local stdio only (Codex / Claude Code / Claude Desktop subprocess).
+    Remote HTTP/SSE access is deferred pending authorization and isolation
+    acceptance. The REST API must remain on host loopback.
     """
     import os
-    from rka.mcp.server import mcp as mcp_server
 
     # Resolve effective transport: CLI flag > env var > stdio default.
-    effective = (transport or os.environ.get("RKA_MCP_TRANSPORT") or "stdio").lower()
-
-    if effective == "http":
-        mcp_server.settings.host = host
-        mcp_server.settings.port = port
-        click.echo(
-            f"🚀 Starting MCP server on Streamable HTTP at http://{host}:{port}"
-            f"{mcp_server.settings.streamable_http_path}"
+    effective = (transport or os.environ.get("RKA_MCP_TRANSPORT") or "stdio").strip().lower()
+    if effective != "stdio":
+        raise click.UsageError(
+            "Only local stdio MCP is supported in Core 3.0.0. "
+            "Remote HTTP/SSE is disabled; use 'rka mcp' and unset "
+            "RKA_MCP_TRANSPORT (or set it to stdio). See docs/REMOTE_ACCESS.md."
         )
-        mcp_server.run(transport="streamable-http")
-    else:
-        # stdio — the default for Claude Desktop / Claude Code subprocess integration.
-        mcp_server.run()
+
+    from rka.mcp.server import mcp as mcp_server
+
+    mcp_server.run()
 
 
 @main.command()

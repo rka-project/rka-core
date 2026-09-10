@@ -5,9 +5,28 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
+No changes recorded yet.
+
+## [3.0.0] — 2026-09-10 (local-first Core release)
+
+See [release scope and upgrade/rollback steps](docs/RELEASE_3_0.md).
+Remote access is deferred; local STDIO and the loopback REST backend are supported.
+
 ### Fixed
 
-- **Journal attribution corrections (unreleased, I3b)**: source/original edits
+- New credential defaults follow the installed Core version rather than pinning
+  2.7.0.3, require no API keys, and no longer require the shelved orchestrator.
+  Existing credentials and version pins remain untouched. Input is hidden;
+  health/config probes use IPv4 loopback on every OS. CLI version identity is
+  stable for console and module entry points, including Windows.
+- I4–I7 currentness and lifecycle fixes reopen stale reviews after new evidence,
+  preserve explicit directive dependencies, reject cross-project rewrites and
+  validate portable pack references without inventing missing provenance.
+- Offline embedding inspection/rebuild/resume/rollback now ships with lifetime
+  admission, verified DB/config backups and recoverable transition receipts.
+  See [embedding operations](docs/embedding-inspection.md).
+
+- **Journal attribution corrections (I3b)**: source/original edits
   now require a reason, declared actor, attribution revision and request ID via
   `correct_note_attribution` / `POST /api/notes/{id}/attribution-corrections`.
   Ordinary REST/MCP/bulk updates reject non-null `source` or `verbatim_input`;
@@ -18,7 +37,7 @@ All notable changes to RKA are documented here. Format loosely follows
   during pack import. Actor declarations are not authentication. See
   [the correction contract](docs/JOURNAL_ATTRIBUTION.md) before upgrading.
 
-- **Explicit journal capture modes (unreleased, I3c)**: raw capture preserves
+- **Explicit journal capture modes (I3c)**: raw capture preserves
   exact supplied text separately from mutable content; PI agent restatements
   require original wording on every explicit-mode creation surface. Markdown
   imports retain exact source slices before display formatting. Complete local
@@ -27,7 +46,7 @@ All notable changes to RKA are documented here. Format loosely follows
   inferring or backfilling quotations. Mode changes use the same revision-guarded
   correction history and survive knowledge-pack round trips.
 
-- **Core hardening / backfill entry points (unreleased)**: pack imports now commit
+- **Core hardening / backfill entry points**: pack imports now commit
   lexical indexes and durable import receipts atomically with worker-owned vector
   intents. Import status distinguishes lexical/semantic completion. The legacy
   embedding CLI preserves project/type/force scope but only queues against saved
@@ -41,13 +60,14 @@ All notable changes to RKA are documented here. Format loosely follows
   process loss. Settings reloads persisted progress. Source edits during inference
   cannot silently complete a stale embedding job. API-only installations must
   run a worker; see [lifecycle and remaining entry-point boundaries](docs/embedding_backends.md#durable-backfill-lifecycle-unreleased-hardening).
-- Built-in embedding backends reject oversized prepared inputs (default 8 KiB)
-  without truncating source text, bound logical calls and provider batches, and
-  enforce a whole-call deadline with one active call per process. Native work
-  retains admission after caller timeout/cancellation until it actually ends.
-  Backfill isolates invalid rows and bounds error samples; legacy hash inspection
-  is paged. This is an initial resource guard, not durable backfill recovery or a
-  hard memory sandbox; see [limits and compatibility](docs/embedding_backends.md#resource-limits-unreleased-hardening).
+- Built-in embedding backends bound prepared inputs, batch padding, provider
+  calls and deadlines without truncating source records. Effective native
+  ceilings are 2 KiB per input and 4 KiB batch/padding; HTTP budgets are separate.
+  FastEmbed runs in a reusable spawned child with cancellation/deadline
+  termination, reaping and parent-death cleanup. Durable backfill isolates bad
+  rows, preserves valid progress and resumes after worker loss. These are not
+  universal memory guarantees for arbitrary models; see [measured limits and
+  compatibility](docs/embedding_backends.md#resource-limits-unreleased-hardening).
 - BibTeX imports use the supported v2 `parse_string` entry point. Base installs
   use a balanced-value subset parser instead of silently truncating nested
   braces; unsupported constructs and malformed/duplicate blocks report errors
@@ -71,6 +91,10 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Security
 
+- This is a local-only release: HTTP/SSE MCP factories/runners, the legacy OAuth
+  proxy and tunnel launcher are disabled. Local STDIO remains unchanged. REST
+  must stay on host loopback; actor declarations are not authentication. See
+  [the exact access boundary](docs/REMOTE_ACCESS.md).
 - Caller-provided file paths no longer grant filesystem access. Server-side
   source/artifact registration, BibTeX-file import and workspace scan/ingest
   and local bootstrap CLI require operator-owned `RKA_SERVER_FILE_ROOTS`; MCP host file operations require
@@ -91,10 +115,12 @@ All notable changes to RKA are documented here. Format loosely follows
   succeeded. This intentionally restricts legacy behavior across REST, typed MCP,
   legacy tools and direct service calls. No schema/data migration is required.
 
-## [3.0.0] — 2026-09-01 (RKA Core / Writer separation)
-
 ### Added
 
+- A reproducible historical-upgrade CI gate uses old 2.8.1 and pre-split 2.9.0
+  source to generate synthetic fixtures with reviewed logical hashes, then
+  checks migrations, rows/edges, indexes/triggers/FKs, legacy vectors, repeated
+  startup, knowledge-pack portability and old-runtime backup restoration.
 - A release-only GHCR workflow now preflight-smokes, builds, publishes, and
   attests `linux/amd64` and `linux/arm64` Core images. Downstream releases use
   the emitted manifest digest rather than a mutable container tag.
@@ -178,7 +204,7 @@ All notable changes to RKA are documented here. Format loosely follows
   desired. It may consume Core's public MCP/REST evidence contract, but Core no
   longer activates writing behavior implicitly.
 
-### Added
+### Earlier pre-split additions (now frozen compatibility)
 
 - **Typed academic-writing semantic core.** Manuscript units now separate pure
   outline depth from structural role and rhetorical move. Unit-evidence uses

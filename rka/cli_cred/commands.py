@@ -100,7 +100,7 @@ def cred_init(non_interactive: bool):
         prompt = f"  {key}"
         if current:
             prompt += " [current set; press Enter to keep]"
-        value = click.prompt(prompt, default=current, show_default=False, hide_input=False)
+        value = click.prompt(prompt, default=current, show_default=False, hide_input=True)
         if value:
             dot.set(key, value)
 
@@ -111,7 +111,7 @@ def cred_init(non_interactive: bool):
         prompt = f"  {key}"
         if current:
             prompt += " [current set; press Enter to keep]"
-        value = click.prompt(prompt, default=current, show_default=False, hide_input=False)
+        value = click.prompt(prompt, default=current, show_default=False, hide_input=True)
         if value:
             dot.set(key, value)
 
@@ -221,7 +221,7 @@ def cred_env(project: str | None, fmt: str):
 @click.option("--apply", is_flag=True, help="Actually write (default: dry-run)")
 @click.option(
     "--api-url",
-    default="http://localhost:9712",
+    default="http://127.0.0.1:9712",
     show_default=True,
     help="rka-server API URL",
 )
@@ -286,7 +286,7 @@ def cred_propagate(apply: bool, api_url: str):
 @click.argument("project", required=False)
 @click.option(
     "--api-url",
-    default="http://localhost:9712",
+    default="http://127.0.0.1:9712",
     show_default=True,
     help="rka-server API URL",
 )
