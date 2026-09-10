@@ -4,6 +4,10 @@ Local-first credential management for RKA. Credentials live on your
 host machine, **outside any git repository**, with file-mode 0600
 enforced and drift detection against every consumer that needs them.
 
+The numeric modes below describe POSIX permissions. On Windows, keep the vault
+under your private user profile and verify its NTFS access permissions; POSIX
+`chmod` bits are not a Windows ACL guarantee.
+
 ## Why
 
 RKA has multiple consumers of the same credentials (the Zotero API
@@ -37,21 +41,27 @@ Default `manifest.toml`:
 
 ```toml
 [global]
-required = ["ZOTERO_API_KEY", "ZOTERO_LIBRARY_ID"]
-optional = ["ZOTERO_LIBRARY_TYPE", "SEMANTIC_SCHOLAR_API_KEY", "SERPAPI_KEY"]
+required = []
+optional = ["ZOTERO_API_KEY", "ZOTERO_LIBRARY_ID", "ZOTERO_LIBRARY_TYPE", "SEMANTIC_SCHOLAR_API_KEY", "SERPAPI_KEY"]
 ```
 
 Default `versions.toml`:
 
 ```toml
 [host.binaries]
-rka = "2.7.0.3"
-zotero-mcp = ">=0.1.0"
+rka = "3.0.0"
 
 [containers]
-"rka-server" = "2.7.0.3"
-"rka-orchestrator" = "0.6.8"
+"rka-server" = "3.0.0"
 ```
+
+New defaults track the installed Core package version and do not require Zotero
+or the shelved orchestrator. Core works with an empty vault. Existing manifests,
+version pins and credential values are **not overwritten** by `rka cred init`.
+After upgrading an existing deployment, explicitly update its Core pins in
+`versions.toml` only after checking the installed CLI and backend versions.
+Interactive credential input is hidden. Historical orchestrator consumers below
+remain compatibility-only, not part of the supported Core install.
 
 ## CLI surface
 
@@ -71,7 +81,7 @@ zotero-mcp = ">=0.1.0"
 | ---------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `claude_desktop`       | `~/Library/Application Support/Claude/claude_desktop_config.json`   | Merges `mcpServers.zotero.env`; preserves all other entries.                                  |
 | `claude_code_json`     | `~/.claude.json`                                                    | Same shape as Claude Desktop.                                                                  |
-| `rka_server_rest`      | `PUT http://localhost:9712/api/config/zotero`                       | Server probes Zotero before persist — doubles as a validity check on the supplied API key.     |
+| `rka_server_rest`      | `PUT http://127.0.0.1:9712/api/config/zotero`                       | Server probes Zotero before persist — doubles as a validity check on the supplied API key.     |
 | `orchestrator_env_file`| `orchestrator/.env` (or `$HOST_ORCH_ENV`)                           | Overwrites `ZOTERO_*` keys only. **`ANTHROPIC_API_KEY` is excluded** per design.                |
 
 `--apply` performs an atomic tmp+rename write at mode 0600. A
@@ -93,7 +103,8 @@ zotero-mcp = ">=0.1.0"
 | `rka_orchestrator_version`  | `docker exec rka-orchestrator grep version /app/orchestrator/pyproject.toml` matches versions.toml.   |
 
 SKIP means "preconditions not met in this environment" (e.g. rka-server not
-running, Claude Desktop not installed). SKIP is not a failure.
+running, Claude Desktop not installed). SKIP is not a failure, but is **not proof of a healthy installation**. Verify
+`GET /api/health` and an actual local MCP query separately.
 
 ## Quick-start
 

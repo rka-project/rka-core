@@ -5,6 +5,9 @@
 # Git
 .git
 .gitignore
+.worktrees/
+rka-demo-content-*/
+*.rka-pack.zip
 
 # Python
 __pycache__

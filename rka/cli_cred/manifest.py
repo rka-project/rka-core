@@ -12,6 +12,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rka import __version__
 from rka.cli_cred.vault import atomic_write_text, manifest_path, versions_path
 
 
@@ -22,8 +23,10 @@ from rka.cli_cred.vault import atomic_write_text, manifest_path, versions_path
 
 DEFAULT_MANIFEST: dict[str, dict[str, list[str]]] = {
     "global": {
-        "required": ["ZOTERO_API_KEY", "ZOTERO_LIBRARY_ID"],
+        "required": [],
         "optional": [
+            "ZOTERO_API_KEY",
+            "ZOTERO_LIBRARY_ID",
             "ZOTERO_LIBRARY_TYPE",
             "SEMANTIC_SCHOLAR_API_KEY",
             "SERPAPI_KEY",
@@ -34,12 +37,10 @@ DEFAULT_MANIFEST: dict[str, dict[str, list[str]]] = {
 
 DEFAULT_VERSIONS: dict[str, dict[str, str]] = {
     "host.binaries": {
-        "rka": "2.7.0.3",
-        "zotero-mcp": ">=0.1.0",
+        "rka": __version__,
     },
     "containers": {
-        "rka-server": "2.7.0.3",
-        "rka-orchestrator": "0.6.8",
+        "rka-server": __version__,
     },
 }
 

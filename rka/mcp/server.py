@@ -17,7 +17,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Annotated, Literal
 
-from mcp.server.fastmcp import FastMCP
+from rka.mcp.local_transport import LocalOnlyFastMCP
 from pydantic import Field
 import httpx
 
@@ -342,7 +342,7 @@ Then follow the returned guide. Also available:
   reference="workflows.md").
 """
 
-mcp = FastMCP("Research Knowledge Agent", instructions=RKA_INSTRUCTIONS)
+mcp = LocalOnlyFastMCP("Research Knowledge Agent", instructions=RKA_INSTRUCTIONS)
 # FastMCP otherwise leaves this unset and the initialize handshake falls back
 # to the MCP SDK version, which makes a stale connector look like the backend's
 # product version. E2 discovery reports connector/backend versions separately;

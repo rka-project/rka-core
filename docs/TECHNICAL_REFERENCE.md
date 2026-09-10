@@ -34,7 +34,7 @@ docker compose up -d --build
 | `rka start-all` | Start the REST API and worker as Dockerless background processes. |
 | `rka stop-all` | Stop processes created by `rka start-all`. |
 | `rka mcp` | Start the default stdio MCP adapter. |
-| `rka mcp --transport http --host 127.0.0.1 --port 9713` | Start local Streamable HTTP MCP. |
+| `rka mcp --transport http` | Disabled in Core 3.0.0; exits with an explanatory error. |
 | `rka status` | Show current project status. |
 | `rka backup` | Create an online, integrity-checked SQLite backup. |
 | `rka migrate` | Run pending migrations. |
@@ -99,9 +99,10 @@ unscoped.
 ### Transport modes
 
 - **stdio:** `rka mcp`
-- **local HTTP:** `rka mcp --transport http --host 127.0.0.1 --port 9713`
+- **HTTP/SSE:** disabled in Core 3.0.0.
 
-The HTTP transport does not provide authentication by itself. Bind it to loopback and use the supported authenticated connector for remote access. See [CHATGPT_CONNECTOR.md](CHATGPT_CONNECTOR.md).
+The REST API is trusted-local, not an authenticated hosting service. Remote
+connectors and tunnels are deferred. See [REMOTE_ACCESS.md](REMOTE_ACCESS.md).
 
 ## REST API
 
