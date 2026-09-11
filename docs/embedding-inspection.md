@@ -1,6 +1,7 @@
 # Inspect an embedding index without changing it
 
-Unreleased commands, available after installing this revision. Inspect/dry-run operate
+Available in the tagged Core 3.0.0 release (`3425a2b`), not every earlier
+development build reporting `3.0.0`. Inspect/dry-run operate
 on local files, not the REST API. They never start a model, test an endpoint,
 save a candidate config, enqueue work or execute a rebuild.
 

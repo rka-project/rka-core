@@ -81,7 +81,9 @@ one literal `{text}` placeholder. Query-only instruction changes do not require
 document re-indexing; changes to the document template or embedding space do.
 See [ADR 0017](adr/0017-portable-embedding-runtime-boundary.md).
 
-## Resource limits (unreleased hardening)
+<a id="resource-limits-unreleased-hardening"></a>
+
+## Resource limits (Core 3.0.0)
 
 All three built-in backends validate input before loading a model or sending a
 request. Single embeddings, queries, batches and connection probes use the same
@@ -152,7 +154,9 @@ encoding decision; [offline recovery](embedding-inspection.md#offline-rebuild-in
 now provides backed-up schema/config transitions. See the
 [E1a design](superpowers/specs/2026-09-06-embedding-resource-boundary.md).
 
-## Durable backfill lifecycle (unreleased hardening)
+<a id="durable-backfill-lifecycle-unreleased-hardening"></a>
+
+## Durable backfill lifecycle (Core 3.0.0)
 
 Startup, **Save configuration**, `POST /api/config/embedding/backfill`, pack imports
 and the legacy backfill CLI queue vector work. A separate **`rka worker`** loads the saved backend configuration and
@@ -265,6 +269,39 @@ A populated index cannot change vector dimension online. Core returns
 then restart them for durable worker backfill. Keep the verified recovery copy.
 
 ## Troubleshooting
+
+### Upgrade backfill OOM / issue #158
+
+The issue report used development commit `f8db01b`, before the final Core 3.0.0
+release (`3425a2b`). Those revisions share a version string but not the same
+backfill implementation. Check the installed source/image revision, not only
+`rka --version`. Update API, worker and admin CLI together; restarting an old
+container does not install the fix. Keep your existing data volume and a verified
+backup. Do not delete embedding tables, repeatedly increase memory caps, or
+change dimensions by editing the persisted config in place.
+
+The released implementation queues startup work for the worker, isolates native
+inference in a child, and enforces the byte/padding budgets above. The API should
+remain available while the worker progresses or reports a bounded failure.
+Check **Settings → Embeddings** or
+`GET /api/config/embedding/backfill/status` for durable attempt/error information.
+`rka admin embedding inspect --data-dir /path/to/rka-data --json` checks stored
+coverage without running inference; inspection does not certify model readiness.
+
+An `embedding_input_limit` error is not an OOM and is not a completed index:
+valid rows can have committed vectors while an oversized row remains unembedded.
+The original long text stays intact and searchable lexically. A failed global
+generation remains lexical until full coverage/consistency passes; repeated API
+restarts do not reset exhausted jobs. Reducing batch size alone cannot admit a
+single row larger than the input ceiling. Automatic chunking and truncation are
+not part of this fix.
+
+For a 768 → 384 model change, the supported procedure is now
+[`rka admin embedding rebuild`](embedding-inspection.md#offline-rebuild-interrupted-recovery-and-rollback),
+with all DB/config peers stopped and an explicit target config. The command
+retains a verified backup, prepares the new generation and queues worker work.
+It does **not** mean all rows were embedded; the same long-input policy still
+applies after switching models.
 
 ### "Embedding config could not be loaded"
 
