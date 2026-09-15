@@ -44,7 +44,9 @@ def test_core_distribution_keeps_the_stable_import_and_cli_names() -> None:
     assert metadata["name"] == "rka-core"
     assert metadata["scripts"]["rka"] == "rka.cli:main"
     assert find_spec("rka.__main__") is not None
-    assert '\nname = "rka-core"\nversion = "3.0.0"\nsource = { editable = "." }' in lock
+    locked_core = next(p for p in tomllib.loads(lock)["package"] if p["name"] == "rka-core")
+    assert locked_core["version"] == metadata["version"]
+    assert locked_core["source"] == {"editable": "."}
 
 
 def test_base_distribution_defaults_to_no_optional_embeddings(monkeypatch) -> None:

@@ -42,6 +42,9 @@ jobs:
       - name: Type-check and build the production frontend
         run: npm run build
 
+      - name: Test runtime search status presentation
+        run: npm test
+
       - name: Preserve the dashboard bundle for Core startup smoke
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -436,6 +436,16 @@ export interface AuditEntry {
 
 // ---- Health ----
 
+/** Runtime retrieval status from the versioned public capability document. */
+export interface CoreCapabilities {
+  schema_version: string
+  embedding: {
+    available: boolean
+    reason_unavailable: string | null
+    search_mode: "lexical" | "hybrid"
+  }
+}
+
 export interface HealthStatus {
   status: string
   version: string

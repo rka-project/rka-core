@@ -1,6 +1,6 @@
 [project]
 name = "rka-core"
-version = "3.0.0"
+version = "3.0.1"
 description = "Local-first research knowledge core with provenance-aware storage, retrieval, REST, and MCP"
 readme = "README.md"
 requires-python = ">=3.11"

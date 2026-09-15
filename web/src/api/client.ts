@@ -141,6 +141,7 @@ import type {
   SearchResult,
   TagCount,
   HealthStatus,
+  CoreCapabilities,
   AuditEntry,
   BibtexImportResult,
   MermaidExport,
@@ -206,6 +207,7 @@ import type {
 export const api = {
   // Health
   health: () => get<HealthStatus>("/health"),
+  capabilities: () => get<CoreCapabilities>("/capabilities"),
 
   // Project
   listProjects: () => get<ProjectInfo[]>("/projects"),

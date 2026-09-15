@@ -7,6 +7,22 @@ All notable changes to RKA are documented here. Format loosely follows
 
 No changes recorded yet.
 
+## [3.0.1] — 2026-09-14 (runtime search status)
+
+### Fixed
+
+- The dashboard's first-run banner and header now use the public capabilities
+  endpoint instead of claiming semantic search is enabled or inferring it from
+  sqlite-vec being loaded. They distinguish hybrid, keyword-only and unconfirmed
+  runtime status. Failed refreshes do not retain a stale positive status.
+- Embedding configuration changes and completed/failed backfills invalidate the
+  displayed capabilities, in addition to regular polling. Existing banner
+  dismissal preferences are preserved.
+
+No database migration, provider default, retrieval algorithm, remote-access
+policy or dependency upgrade is included. This does not enable embeddings in a
+demo with embeddings disabled. See [patch release notes](docs/RELEASE_3_0_1.md).
+
 ## [3.0.0] — 2026-09-10 (local-first Core release)
 
 See [release scope and upgrade/rollback steps](docs/RELEASE_3_0.md).
