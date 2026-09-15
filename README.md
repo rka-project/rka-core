@@ -163,7 +163,7 @@ Prerequisites: Git, Python 3, [uv](https://docs.astral.sh/uv/getting-started/ins
 macOS or Linux:
 
 ```bash
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 cd rka-core
 docker compose up -d
 uv tool install --force --reinstall .
@@ -176,7 +176,7 @@ Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Code" | Out-Null
 Set-Location "$env:USERPROFILE\Code"
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 Set-Location rka-core
 docker compose up -d
 uv tool install --force --reinstall .

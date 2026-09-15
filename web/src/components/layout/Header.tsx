@@ -12,12 +12,14 @@ import {
 } from "@/components/ui/sheet"
 import { Sidebar } from "./Sidebar"
 import { useHealth } from "@/hooks/useProject"
+import { useEmbeddingStatus } from "@/hooks/useEmbeddingStatus"
 
 export function Header() {
   const [query, setQuery] = useState("")
   const [navigationOpen, setNavigationOpen] = useState(false)
   const navigate = useNavigate()
   const { data: health } = useHealth()
+  const searchStatus = useEmbeddingStatus()
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,14 +80,12 @@ export function Header() {
               />
               {health.status === "ok" ? "Online" : "Error"}
             </Badge>
-            {health.vec_available && (
-              <Badge variant="secondary" className="text-xs">
-                Vector
-              </Badge>
-            )}
             <span className="text-xs text-muted-foreground">v{health.version}</span>
           </>
         )}
+        <Badge variant="secondary" className="text-xs" title={searchStatus.description}>
+          {searchStatus.label}
+        </Badge>
       </div>
     </header>
   )

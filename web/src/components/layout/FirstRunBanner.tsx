@@ -2,13 +2,13 @@ import { useState } from "react"
 import { NavLink } from "react-router-dom"
 import { X, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useEmbeddingStatus } from "@/hooks/useEmbeddingStatus"
 
-// Mission D / v2.4.0: dismissible first-run banner announcing the
-// default-on semantic-search baseline. Dismissal persists in
-// localStorage so the banner stays gone across reloads.
+// Preserve existing dismissal preferences; the header always shows live status.
 const LOCALSTORAGE_KEY = "rka_first_run_banner_dismissed_v2_4"
 
 export function FirstRunBanner() {
+  const status = useEmbeddingStatus()
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem(LOCALSTORAGE_KEY) === "true"
@@ -34,11 +34,10 @@ export function FirstRunBanner() {
       <Sparkles className="h-4 w-4 text-blue-600 shrink-0" />
       <div className="min-w-0 flex-1">
         <span className="font-medium text-blue-900">
-          Semantic search is enabled
+          {status.label}
         </span>
         <span className="text-blue-700 ml-2">
-          (FastEmbed nomic-768 baseline). Switch to LM Studio, Ollama, or any
-          OpenAI-compatible HTTP backend in{" "}
+          {status.description} Manage embeddings in{" "}
           <NavLink to="/settings" className="underline font-medium">
             Settings → Embeddings
           </NavLink>

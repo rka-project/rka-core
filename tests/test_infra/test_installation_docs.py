@@ -35,6 +35,15 @@ def test_quick_start_installs_and_verifies_both_runtime_layers():
     assert "Invoke-RestMethod http://127.0.0.1:9712/api/health" in readme
 
 
+@pytest.mark.parametrize("relative", ["README.md", "INSTALL.md"])
+def test_active_clone_commands_pin_the_packaged_version(relative: str):
+    active = _read(relative).split("## 11.", maxsplit=1)[0]
+    version = tomllib.loads(_read("pyproject.toml"))["project"]["version"]
+    tags = re.findall(r"git clone --branch (\S+) --depth 1", active)
+    assert len(tags) >= 2  # Both POSIX and Windows instructions.
+    assert set(tags) == {f"v{version}"}
+
+
 def test_active_install_guide_has_current_integration_and_codex_contracts():
     install = _read("INSTALL.md")
     active = install.split("## 11.", maxsplit=1)[0]

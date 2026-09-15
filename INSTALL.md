@@ -1,8 +1,9 @@
 # RKA Installation Guide
 
-> Core 3.0.0: local REST + STDIO MCP only. Remote connectors, tunnels and public
+> Core 3.0.1: local REST + STDIO MCP only. Remote connectors, tunnels and public
 > Spaces are deferred. See [supported access boundaries](docs/REMOTE_ACCESS.md).
 > Existing installations must back up first; see [the 3.0 upgrade runbook](docs/RELEASE_3_0.md).
+> For this patch's changes and rollback notes, see [Core 3.0.1](docs/RELEASE_3_0_1.md).
 
 > **How to read this guide**
 > - **Humans**: read top-to-bottom; the quick install path is §3.
@@ -127,7 +128,7 @@ macOS or Linux:
 ```bash
 mkdir -p ~/Code
 cd ~/Code
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 cd rka-core
 docker compose up -d
 ```
@@ -137,7 +138,7 @@ Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Code" | Out-Null
 Set-Location "$env:USERPROFILE\Code"
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 Set-Location rka-core
 docker compose up -d
 ```
@@ -361,7 +362,7 @@ macOS example; use the platform path from the table above):
 ```json
 {
   "schema_version": "rka.integration/v1",
-  "backend_version": "3.0.0",
+  "backend_version": "3.0.1",
   "binary_path": "/Users/<you>/.local/bin/rka",
   "api_endpoint_url": "http://127.0.0.1:9712"
 }
@@ -516,7 +517,7 @@ macOS or Linux:
 ```bash
 mkdir -p ~/Code
 cd ~/Code
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 cd rka-core
 uv tool install --force --reinstall .
 ~/.local/bin/rka --version
@@ -527,7 +528,7 @@ Windows PowerShell:
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\Code" | Out-Null
 Set-Location "$env:USERPROFILE\Code"
-git clone --branch v3.0.0 --depth 1 https://github.com/rka-project/rka-core.git
+git clone --branch v3.0.1 --depth 1 https://github.com/rka-project/rka-core.git
 Set-Location rka-core
 uv tool install --force --reinstall .
 & "$env:USERPROFILE\.local\bin\rka.exe" --version

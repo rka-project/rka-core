@@ -391,6 +391,7 @@ function EmbeddingsConfigCard() {
     mutationFn: (payload: EmbeddingConfigT) => api.updateEmbeddingConfig(payload),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["embedding-config"] })
+      queryClient.invalidateQueries({ queryKey: ["capabilities"] })
       const jobId = (data as { job_id?: string }).job_id
       if (jobId) {
         toast.success(`Re-embed started (job ${jobId})`)
@@ -443,6 +444,7 @@ function EmbeddingsConfigCard() {
   // Stop polling once the job reaches a terminal state.
   useEffect(() => {
     if (backfill && (backfill.state === "complete" || backfill.state === "failed")) {
+      queryClient.invalidateQueries({ queryKey: ["capabilities"] })
       if (backfill.state === "complete") toast.success("Re-embed complete")
       else toast.error(`Re-embed failed: ${backfill.error ?? "unknown"}`)
     }
