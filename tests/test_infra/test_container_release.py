@@ -35,6 +35,15 @@ class ContainerReleaseTests(TestCase):
         version = project_version(ROOT / "pyproject.toml")
         self.assertEqual(validate_release_tag(f"v{version}", version), version)
 
+    def test_ci_image_smoke_reads_the_checkout_version(self) -> None:
+        workflow = (ROOT / ".github/workflows/pytest.yml").read_text(encoding="utf-8")
+        smoke = workflow.split("name: Smoke-test the isolated Core image", 1)[1].split(
+            "- name:", 1
+        )[0]
+        self.assertIn("--expected-version", smoke)
+        self.assertIn('project_version(Path("pyproject.toml"))', smoke)
+        self.assertNotIn("--expected-version 3.0.0", smoke)
+
     def test_container_release_rejects_noncanonical_or_mismatched_tags(self) -> None:
         cases = [
             ("3.0.0", "3.0.0"),

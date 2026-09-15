@@ -269,7 +269,7 @@ jobs:
         run: >-
           python scripts/container_image_smoke.py
           --image rka-core:ci
-          --expected-version 3.0.0
+          --expected-version "$(python -c 'from pathlib import Path; from scripts.validate_container_release import project_version; print(project_version(Path("pyproject.toml")))')"
 
       - name: Verify offline recovery with the image's compiled sqlite-vec
         run: >-
