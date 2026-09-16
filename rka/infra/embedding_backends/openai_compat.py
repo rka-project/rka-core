@@ -36,7 +36,7 @@ from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
     reconcile_dim,
 )
-from rka.infra.embedding_resources import EmbeddingResourceLimits, request_timeout, run_http
+from rka.infra.embedding_resources import HTTPEmbeddingResourceLimits, request_timeout, run_http
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class OpenAICompatBackend:
         if not model:
             raise ValueError("openai_compat backend requires model")
         self._base_url = base_url.rstrip("/")
-        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
+        self.resource_limits = HTTPEmbeddingResourceLimits.from_config(resource_limits)
         self._model = model
         self._api_key = api_key or None  # treat empty string as missing
         # dim is "expected" — the backend trusts the config until the

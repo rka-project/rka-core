@@ -123,6 +123,29 @@ class EmbeddingResourceLimits:
         return batches
 
 
+@dataclass(frozen=True)
+class HTTPEmbeddingResourceLimits(EmbeddingResourceLimits):
+    """16 KiB HTTP inputs; aggregate caps and native inference stay unchanged.
+
+    The provider must independently support the accepted input's token count.
+    This is admission policy only, not a change to text or embedding identity.
+    """
+
+    max_input_bytes: int = 16384
+
+    @classmethod
+    def from_config(cls, config: Mapping[str, Any] | None) -> "HTTPEmbeddingResourceLimits":
+        # Older partial configs may tighten batch/padding without specifying an
+        # input cap. Honor those budgets rather than making them unloadable when
+        # the implicit HTTP input default grows. Explicit input caps are untouched.
+        if isinstance(config, Mapping) and "max_input_bytes" not in config:
+            caps = [config.get("max_batch_bytes", cls.max_batch_bytes),
+                    config.get("max_padding_bytes", cls.max_padding_bytes)]
+            if all(type(cap) is int for cap in caps):
+                config = {**config, "max_input_bytes": min(cls.max_input_bytes, *caps)}
+        return super().from_config(config)
+
+
 # Admission is process-wide across backend instances and event loops. No caller
 # waits in an unbounded semaphore/executor queue; durable jobs own retry policy.
 _ADMISSION = threading.BoundedSemaphore(1)
@@ -136,7 +159,7 @@ def native_resource_limits(config=None):
 
     Preserve compatible saved configuration while applying min(config, native
     ceiling). This changes admission only, not accepted text or vector identity.
-    HTTP providers retain the shared configurable maxima.
+    HTTP defaults do not apply to native inference.
     """
     limits = EmbeddingResourceLimits.from_config(config)
     return replace(limits, max_input_bytes=min(limits.max_input_bytes, 2048),

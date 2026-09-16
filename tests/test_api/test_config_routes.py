@@ -295,6 +295,7 @@ async def test_put_preserves_secret_and_advanced_fields(api_client, monkeypatch)
         "api_key": "sk-preserve",
         "dim": 768,
         "timeout_seconds": 45,
+        "resource_limits": {"max_input_bytes": 16384},
         "embedding_space_id": "space-v1",
         "query_template": "Query: {text}",
         "document_template": "{text}",

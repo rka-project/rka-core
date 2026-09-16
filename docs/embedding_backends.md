@@ -83,7 +83,7 @@ See [ADR 0017](adr/0017-portable-embedding-runtime-boundary.md).
 
 <a id="resource-limits-unreleased-hardening"></a>
 
-## Resource limits (Core 3.0.0)
+## Resource limits
 
 All three built-in backends validate input before loading a model or sending a
 request. Single embeddings, queries, batches and connection probes use the same
@@ -92,7 +92,7 @@ text is unchanged. This intentionally tightens compatibility for long documents.
 
 | `config.resource_limits` key | HTTP default/maximum | FastEmbed effective ceiling |
 |---|---:|---:|
-| `max_input_bytes` | 8192 | 2048 |
+| `max_input_bytes` | 16384 | 2048 |
 | `max_batch_inputs` | 8 | 8 |
 | `max_batch_bytes` | 16384 | 4096 |
 | `max_padding_bytes` | 16384 | 4096 |
@@ -112,11 +112,12 @@ These are UTF-8 **byte budgets, not token counts or memory limits**. Prefixes an
 templates count toward the input limit. Padding cost is conservatively represented
 by longest prepared input bytes multiplied by batch size. The complete logical
 call is validated first; accepted inputs are then split into ordered batches.
-Backfill also caps its database fetch size conservatively, allowing at most two
-maximum-sized inputs per fetch with the default budgets. Legacy hash inspection
+Backfill also caps its database fetch size conservatively, allowing one
+maximum-sized HTTP input or two maximum-sized native inputs per fetch with the
+default budgets. Legacy hash inspection
 uses keyset pages of eight rows; it no longer loads the entire corpus at once.
 
-The optional nested object can only tighten these limits. For example, add
+The optional nested object can tighten these limits. For example, add
 `"resource_limits": {"max_input_bytes": 1024, "call_timeout_seconds": 60}` inside
 `config`. Limits must be positive, within the maxima above and consistent
 (input ≤ batch bytes ≤ call bytes, input ≤ padding bytes, batch count ≤ call count).
@@ -125,6 +126,20 @@ are accepted in backend configuration; the web form has no dedicated controls.
 Changing admission limits alone does not change the encoding identity or discard
 compatible vectors. Same-backend web edits preserve existing advanced config;
 switching backend kinds starts a new config, so reapply any tighter limits then.
+
+**Unreleased HTTP default change:** `openai_compat` and `ollama` now admit up to
+16 KiB per prepared input by default (previously 8 KiB). Existing explicitly
+configured smaller input limits remain in effect. If an older partial config
+only lowers batch or padding bytes, the implicit input limit is capped by those
+budgets so that the config remains usable. Batch, padding, total-call, concurrency
+and timeout ceilings do not increase. Confirm the provider's model context
+supports the actual token count independently: **16 KiB is not 16K tokens**.
+Template/prefix bytes still count; inputs exceeding the cap still fail explicitly
+without truncation. FastEmbed retains its 2 KiB effective input cap and does not
+accept the HTTP-only 16 KiB setting. Changing admission limits does not require
+discarding existing compatible vectors; previously rejected rows need a backfill
+retry. To retain the previous HTTP cap, set
+`"resource_limits": {"max_input_bytes": 8192}` inside `config`.
 
 Only one provider call is admitted **per process**, across backend instances.
 There is no in-memory waiting queue. HTTP logical-call deadlines include all
