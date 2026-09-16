@@ -5,7 +5,15 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
-No changes recorded yet.
+### Changed
+
+- HTTP embedding backends (`openai_compat`, including LM Studio, and `ollama`)
+  now default to a 16 KiB prepared-input limit instead of 8 KiB. Explicit smaller
+  input limits and older tightened batch/padding budgets remain respected.
+  FastEmbed keeps its 2 KiB native ceiling. Batch, padding, total-call, concurrency
+  and timeout caps are unchanged; no text is truncated and compatible vectors
+  are retained. This is a UTF-8 byte limit, not a 16K-token guarantee. See
+  [embedding resource limits](docs/embedding_backends.md#resource-limits-unreleased-hardening).
 
 ## [3.0.1] — 2026-09-14 (runtime search status)
 

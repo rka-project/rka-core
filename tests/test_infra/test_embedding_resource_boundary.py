@@ -15,6 +15,7 @@ from rka.infra.embedding_resources import (
     EmbeddingBusy,
     EmbeddingCallTimeout,
     EmbeddingResourceLimits,
+    HTTPEmbeddingResourceLimits,
 )
 
 
@@ -87,7 +88,7 @@ async def test_connection_probe_cannot_bypass_input_policy(captured_backend):
 async def test_multibyte_limit_is_bytes_not_characters(captured_backend):
     backend, calls = captured_backend
     with pytest.raises(RuntimeError, match="embedding_input_limit"):
-        await backend.embed("0 " + "界" * 3000)
+        await backend.embed("0 " + "界" * (backend.resource_limits.max_input_bytes // 3 + 1))
     assert calls == []
 
 
@@ -137,7 +138,7 @@ async def test_template_expansion_is_inside_the_limit():
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     with pytest.raises(RuntimeError, match="embedding_input_limit"):
-        await backend.embed("0 " + "x" * 1000)
+        await backend.embed("0 " + "x" * (backend.resource_limits.max_input_bytes - 8000))
     assert calls == []
 
 
@@ -206,6 +207,112 @@ def test_padding_proxy_splits_even_when_total_bytes_fit():
 def test_resource_limits_reject_invalid_or_unbounded_configuration(bad):
     with pytest.raises(ValueError, match="resource_limits"):
         EmbeddingResourceLimits.from_config(bad)
+
+
+@pytest.mark.parametrize("kind", ["openai_compat", "ollama"])
+def test_http_16k_is_default_and_lower_saved_limits_preserve_space_identity(kind):
+    from dataclasses import asdict
+    from rka.services.embedding_index import embedding_space_signature
+
+    config = {"backend": kind, "config": {
+        "base_url": "http://isolated.test", "model": "synthetic", "dim": 2,
+    }}
+    defaults = make_backend(config).resource_limits
+    assert asdict(defaults) == {**asdict(EmbeddingResourceLimits()), "max_input_bytes": 16384}
+    signature = embedding_space_signature(config)
+    config["config"]["resource_limits"] = {"max_input_bytes": 8192}
+    limits = make_backend(config).resource_limits
+    assert isinstance(limits, EmbeddingResourceLimits)  # backfill fetch budgeting
+    assert asdict(limits) == {**asdict(defaults), "max_input_bytes": 8192}
+    assert embedding_space_signature(config) == signature
+    assert HTTPEmbeddingResourceLimits.from_config(asdict(limits)) == limits
+
+
+@pytest.mark.parametrize("bad", [
+    {"max_input_bytes": 16385}, {"max_input_bytes": True},
+    {"max_input_bytes": 0}, {"max_input_bytes": 16384.0},
+    {"max_input_bytes": "16384"}, {"max_input_bytes": float("inf")},
+    {"max_input_bytes": 16384, "max_batch_bytes": 8192},
+    {"max_input_bytes": 16384, "max_padding_bytes": 8192},
+    {"max_batch_bytes": 16385}, {"max_padding_bytes": 16385},
+    {"max_call_bytes": 262145}, {"max_batch_inputs": 9},
+    {"max_call_inputs": 129}, {"call_timeout_seconds": 121},
+    {"_input_ceiling": 1000000}, {"unknown": 1}, [], False,
+])
+def test_http_default_cannot_bypass_other_bounds(bad):
+    with pytest.raises(ValueError, match="resource_limits"):
+        HTTPEmbeddingResourceLimits.from_config(bad)
+
+
+def test_native_does_not_accept_http_only_ceiling():
+    with pytest.raises(ValueError, match="max_input_bytes"):
+        FastEmbedBackend(resource_limits={"max_input_bytes": 16384})
+
+
+@pytest.mark.parametrize("kind", ["openai_compat", "ollama"])
+@pytest.mark.parametrize("saved", [
+    {}, {"call_timeout_seconds": 60},
+    {"max_batch_bytes": 8192}, {"max_padding_bytes": 8192},
+    {"max_batch_bytes": 8192, "max_padding_bytes": 12000, "max_call_bytes": 8192},
+    {"max_input_bytes": 4096, "max_batch_bytes": 8192},
+])
+def test_http_defaults_respect_existing_partial_config_budgets(kind, saved):
+    original = dict(saved)
+    backend = make_backend({"backend": kind, "config": {
+        "base_url": "http://isolated.test", "model": "synthetic", "resource_limits": saved,
+    }})
+    expected = saved.get("max_input_bytes", min(16384, saved.get("max_batch_bytes", 16384),
+                                              saved.get("max_padding_bytes", 16384)))
+    assert backend.resource_limits.max_input_bytes == expected
+    assert saved == original  # do not rewrite the caller's persisted config
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", [OpenAICompatBackend, OllamaBackend])
+@pytest.mark.parametrize("is_query", [False, True])
+async def test_http_16k_exact_multibyte_input_and_aggregate_guards(cls, is_query):
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        texts = body.get("input", [body.get("prompt")])
+        calls.append(texts)
+        if "prompt" in body:
+            return httpx.Response(200, json={"embedding": [0.5, 0.5]})
+        return httpx.Response(200, json={"data": [
+            {"index": i, "embedding": [0.5, 0.5]} for i in range(len(texts))
+        ]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        backend = cls(base_url="http://isolated.test", model="synthetic", dim=2,
+                      http_client=client)
+        exact = "界" * 5461 + "x"
+        assert len(exact.encode()) == 16384
+        assert await backend.embed(exact, is_query=is_query) == [0.5, 0.5]
+        assert calls == [[exact]]
+        calls.clear()
+        assert await backend.embed_batch([exact, "short", exact]) == [[0.5, 0.5]] * 3
+        assert calls == [[exact], ["short"], [exact]]
+        calls.clear()
+        with pytest.raises(RuntimeError, match="max_input_bytes=16384"):
+            await backend.embed_batch(["valid", exact + "x"])
+        assert calls == []
+        with pytest.raises(RuntimeError, match="max_call_bytes"):
+            await backend.embed_batch([exact] * 17)
+        assert calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_query", [False, True])
+async def test_http_16k_template_expansion_still_counts(is_query):
+    backend = OpenAICompatBackend(
+        base_url="http://isolated.test", model="synthetic", dim=2,
+        query_template="q: {text}", document_template="d: {text}",
+    )
+    backend.validate_input("x" * 16381, is_query=is_query)
+    with pytest.raises(RuntimeError, match="max_input_bytes=16384"):
+        await backend.embed("x" * 16382, is_query=is_query)
+    assert backend._http is None
 
 
 @pytest.mark.parametrize("kind", ["fastembed", "openai_compat", "ollama"])

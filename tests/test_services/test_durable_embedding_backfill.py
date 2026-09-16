@@ -370,17 +370,23 @@ async def test_disabled_worker_is_not_reported_as_a_superseded_generation(db):
 
 
 @pytest.mark.asyncio
-async def test_dead_worker_process_resumes_without_reembedding_committed_rows(db):
+@pytest.mark.parametrize("resource_limits,committed", [
+    (None, 1), ({"max_input_bytes": 8192}, 2),
+])
+async def test_dead_worker_process_resumes_without_reembedding_committed_rows(
+    db, resource_limits, committed,
+):
     import subprocess
     import sys
     from rka.services.embedding_jobs import EmbeddingJobs
 
     service, calls = await setup_index(db)
     job = await EmbeddingJobs(db).request(service)
-    # A disposable child uses a fake model, commits two rows, then stalls on
-    # the third. Only this known test child is terminated, never a live worker.
+    # A disposable child commits one fetch, then stalls on the next. The new
+    # 16 KiB HTTP default fetches one row; an explicit legacy 8 KiB cap fetches
+    # two. Only this known test child is terminated, never a live worker.
     script = """
-import asyncio, sys
+import asyncio, json, sys
 from rka.infra.database import Database
 from rka.infra.embeddings import EmbeddingService
 from rka.infra.embedding_backends.openai_compat import OpenAICompatBackend
@@ -391,7 +397,7 @@ async def main():
     await db.connect()
     await db.initialize_phase2_schema()
     state = await get_embedding_index_state(db)
-    service = EmbeddingService(db=db, backend=OpenAICompatBackend(base_url="http://isolated.test", model="synthetic", dim=2))
+    service = EmbeddingService(db=db, backend=OpenAICompatBackend(base_url="http://isolated.test", model="synthetic", dim=2, resource_limits=json.loads(sys.argv[2])))
     service.bind_index_generation(state.generation, space_signature=state.space_signature)
     count = 0
     async def embed(texts, **kw):
@@ -406,7 +412,7 @@ async def main():
 asyncio.run(main())
 """
     child = subprocess.Popen(
-        [sys.executable, "-c", script, db.db_path],
+        [sys.executable, "-c", script, db.db_path, json.dumps(resource_limits)],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -423,11 +429,11 @@ asyncio.run(main())
             await asyncio.to_thread(child.wait)
         child.stdout.close()
         child.stderr.close()
-    assert (await db.fetchone("SELECT count(*) AS n FROM embedding_metadata"))["n"] == 2
-    assert (await EmbeddingJobs(db).status(job["id"]))["processed"] == 2
+    assert (await db.fetchone("SELECT count(*) AS n FROM embedding_metadata"))["n"] == committed
+    assert (await EmbeddingJobs(db).status(job["id"]))["processed"] == committed
     await db.execute("UPDATE jobs SET lease_until='2000-01-01T00:00:00Z' WHERE id=?", [job["id"]])
     await db.commit()
     assert await EnrichmentWorker(db=db, embeddings=service, worker_id="replacement").run_once()
     status = await EmbeddingJobs(db).status(job["id"])
     assert status["state"] == "complete" and status["attempts"] == 2
-    assert calls == ["Synthetic durable note 2"]
+    assert calls == [f"Synthetic durable note {i}" for i in range(committed, 3)]

@@ -184,3 +184,51 @@ def test_error_sampling_is_bounded_and_does_not_include_arbitrary_exception_text
         errors.record(f"jrn_{index}", ValueError("private source"))
     assert errors.count == 1000 and len(errors.samples) == 3
     assert "private source" not in errors.summary()
+
+
+@pytest.mark.asyncio
+async def test_http_16k_backfill_preserves_sources_and_existing_vectors(db):
+    await reshape_all_vec_tables_if_needed(db, dim=2)
+    texts = ["existing short note", "x" * 10527, "界" * 5461 + "x", "x" * 16385]
+    for index, text in enumerate(texts):
+        await db.execute(
+            "INSERT INTO journal (id, content, source, type, project_id) "
+            "VALUES (?, ?, 'executor', 'note', 'proj_default')",
+            [f"jrn_16k_{index}", text],
+        )
+    await db.commit()
+    calls = []
+    await BackfillService(db=db, embeddings=embeddings_for(
+        db, calls, {"max_input_bytes": 8192},
+    )).run_backfill(
+        register_job(), entity_types=["journal"],
+    )
+    assert calls == [[texts[0]]]
+    existing = dict(await db.fetchone(
+        "SELECT * FROM embedding_metadata WHERE entity_id='jrn_16k_0'"
+    ))
+    calls.clear()
+    service = embeddings_for(db, calls)
+    backfill = BackfillService(db=db, embeddings=service)
+    assert backfill._batch_size == 1
+    result = await backfill.run_backfill(register_job(), entity_types=["journal"])
+    assert result.state == "failed" and result.processed == 2
+    assert "max_input_bytes=16384" in result.error
+    assert calls == [[texts[1]], [texts[2]]]
+    assert dict(await db.fetchone(
+        "SELECT * FROM embedding_metadata WHERE entity_id='jrn_16k_0'"
+    )) == existing
+    for index, text in enumerate(texts):
+        row = await db.fetchone("SELECT content FROM journal WHERE id=?", [f"jrn_16k_{index}"])
+        assert row["content"] == text
+        metadata = await db.fetchone(
+            "SELECT content_hash FROM embedding_metadata WHERE entity_id=?", [f"jrn_16k_{index}"]
+        )
+        if index == 3:
+            assert metadata is None
+        else:
+            assert metadata["content_hash"] == EmbeddingService.content_hash(text)
+    assert (await db.fetchone("SELECT count(*) AS n FROM vec_journal"))["n"] == 3
+    calls.clear()
+    repeat = await backfill.run_backfill(register_job(), entity_types=["journal"])
+    assert repeat.processed == 0 and calls == []

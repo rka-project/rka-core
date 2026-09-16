@@ -33,7 +33,7 @@ from rka.infra.embedding_backends.base import (
     EmbeddingConfigError as EmbeddingConfigError,
     reconcile_dim,
 )
-from rka.infra.embedding_resources import EmbeddingResourceLimits, request_timeout, run_http
+from rka.infra.embedding_resources import HTTPEmbeddingResourceLimits, request_timeout, run_http
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class OllamaBackend:
         if not model:
             raise ValueError("ollama backend requires model")
         self._base_url = base_url.rstrip("/")
-        self.resource_limits = EmbeddingResourceLimits.from_config(resource_limits)
+        self.resource_limits = HTTPEmbeddingResourceLimits.from_config(resource_limits)
         self._model = model
         self._dim: int = dim or 0
         self._timeout = request_timeout(timeout_seconds)
