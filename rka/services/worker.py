@@ -357,7 +357,13 @@ class EnrichmentWorker:
             handled = await self.run_once()
             if handled:
                 continue
-            await asyncio.sleep(self.poll_interval)
+            if stop_event is None:
+                await asyncio.sleep(self.poll_interval)
+            else:
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=self.poll_interval)
+                except TimeoutError:
+                    pass
 
     async def _process_job(self, job: dict[str, Any]) -> dict[str, Any]:
         from rka.services.embedding_jobs import BACKFILL_JOB_TYPES

@@ -160,6 +160,10 @@ class RKAConfig(BaseSettings):
     job_poll_interval: float = Field(default=1.0, description="Worker poll interval in seconds")
     job_lease_seconds: int = Field(default=300, description="Job lease duration before recovery")
     job_max_attempts: int = Field(default=5, description="Max attempts before a job is marked failed")
+    job_shutdown_grace_seconds: float = Field(
+        default=20.0, ge=0, le=300,
+        description="Worker in-flight job drain before cancellation; allow extra container cleanup time",
+    )
 
     @property
     def database_url(self) -> str:

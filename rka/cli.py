@@ -164,11 +164,12 @@ def worker(
     """Run the background enrichment worker."""
     from rka.config import RKAConfig
     from rka.infra.database import Database
+    from rka.infra.worker_lifecycle import drain_worker, worker_shutdown_signals
     from rka.services.worker import EnrichmentWorker
 
     config = RKAConfig()
 
-    async def _worker():
+    async def _worker(stop_event):
         db = Database(config.database_url)
         await db.connect()
         try:
@@ -189,18 +190,25 @@ def worker(
                 max_attempts=max_attempts or config.job_max_attempts,
             )
 
-            if once:
-                handled = await runner.run_once()
+            if not once:
+                click.echo(f"Starting worker for {config.database_url}")
+            handled = await drain_worker(
+                runner, stop_event, grace_seconds=config.job_shutdown_grace_seconds, once=once,
+            )
+            if once and not stop_event.is_set():
                 click.echo("Processed 1 job." if handled else "No jobs available.")
-                return
-
-            click.echo(f"Starting worker for {config.database_url}")
-            await runner.run_forever()
         finally:
             await db.close()
 
+    async def _run():
+        stop_event = asyncio.Event()
+        # Keep handlers through initialization and database close, including
+        # --once. A stop during initialization must not start processing jobs.
+        with worker_shutdown_signals(stop_event):
+            await _worker(stop_event)
+
     try:
-        asyncio.run(_worker())
+        asyncio.run(_run())
     except KeyboardInterrupt:
         click.echo("Worker stopped.")
 

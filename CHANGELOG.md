@@ -5,6 +5,18 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Offline embedding inspect/dry-run/rebuild/resume/rollback share runtime's
+  backend-specific resource validation. Valid HTTP 16 KiB budgets no longer
+  fail the old generic 8 KiB validator; FastEmbed limits remain unchanged.
+  Invalid budgets report a stable, credential-safe error category.
+- The worker CLI handles SIGTERM/Ctrl-C with a bounded in-flight drain (20s by
+  default), followed by lease-fenced cancellation and database cleanup. Idle
+  polling wakes immediately; `--once` and startup stops are covered. Existing
+  retry limits and failure states are preserved. Compose leaves a 30s outer
+  stop grace; see [shutdown settings and limitations](docs/embedding-inspection.md#worker-shutdown-unreleased-fix).
+
 ### Changed
 
 - HTTP embedding backends (`openai_compat`, including LM Studio, and `ollama`)

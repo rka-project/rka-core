@@ -43,6 +43,14 @@ configuration. Provider readiness is **not tested**. Read the `assessment` and
 All plans are advisory and explicitly mark execution unsupported. A dimension
 change is not performed by passing a target config.
 
+In the unreleased fix, offline commands use the same backend-specific resource
+policy as runtime construction: HTTP backends accept configured input caps up to
+16 KiB, while FastEmbed retains its tighter native limits. A malformed or
+inconsistent budget reports `resource_limits_invalid` without printing config
+values or credentials. Inspection still makes no provider calls. Use matching
+Core revisions for runtime and admin commands; an older admin CLI may reject a
+valid newer HTTP budget.
+
 Default limits are 50,000 source rows and 30 seconds; `--max-rows` (up to 100,000)
 and `--timeout` (up to 60 seconds) adjust those bounds. Oversize rows (2 MiB
 SQLite limit), config files over 64 KiB, unsupported older schemas or exhausted
@@ -133,3 +141,30 @@ resolve contention: kernel ownership, not file existence, determines live peers.
 The backup hash detects changed bytes; it does not authenticate a malicious
 operator who controls both the backups and their checksums. Keep old binaries
 stopped: advisory locks cannot make unrelated software obey this protocol.
+
+## Worker shutdown (unreleased fix)
+
+`rka worker` and `rka worker --once` handle SIGTERM and Ctrl-C. The continuous
+worker stops starting further jobs and allows the current job to finish for
+`RKA_JOB_SHUTDOWN_GRACE_SECONDS` (default 20 seconds, accepted range 0–300).
+After that drain interval it cancels through the existing lease-fenced queue
+path, closes the database and releases its runtime slot. An interrupted attempt
+retains the existing retry budget: it becomes pending if attempts remain, or
+failed at the limit; shutdown does not silently reset failures or mark unfinished
+work complete. A signal during initialization prevents the first job from
+starting after initialization finishes.
+
+Compose defaults to a 30-second outer stop grace via
+`RKA_WORKER_STOP_GRACE_PERIOD`. If increasing the worker drain interval, increase
+the outer grace too, leaving time for provider cancellation and DB cleanup.
+The drain interval is not a hard bound on cleanup; a stuck dependency or a
+shorter external supervisor timeout can still force termination. For other
+supervisors (including a single-container demo), configure their stop timeout
+and signal forwarding separately. Do not use `docker kill`/SIGKILL for routine
+maintenance. On Windows, Ctrl-C is the cooperative console path; forcefully
+terminating a process does not deliver a cooperative shutdown signal.
+
+After stopping peers, verify that the processes actually exited before running
+maintenance. A successful worker exit is not evidence that every embedding job
+succeeded or that the provider is healthy. Runtime locks remain authoritative;
+never remove them to get around a busy error.

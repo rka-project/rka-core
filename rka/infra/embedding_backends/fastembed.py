@@ -22,7 +22,7 @@ from rka.infra.embedding_backends.base import (
     ConnectionTestResult,
     reconcile_dim,
 )
-from rka.infra.embedding_resources import native_resource_limits, run_native
+from rka.infra.embedding_resources import embedding_resource_limits, run_native
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class FastEmbedBackend:
         resource_limits: dict | None = None,
     ) -> None:
         self._model_name = model_name
-        self.resource_limits = native_resource_limits(resource_limits)
+        self.resource_limits = embedding_resource_limits("fastembed", resource_limits)
         self._model: Any = None
         # If `dim` is provided, that becomes the strict expectation enforced
         # by `reconcile_dim`. If omitted (None), default to nomic-v1.5's 768

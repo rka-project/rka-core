@@ -16,9 +16,13 @@ from tests.test_cli.test_embedding_inspect import setup_store
 from tests.test_services.test_embedding_documents import RecordingBackend
 
 
-async def prepare(db, dim=384):
+async def prepare(db, dim=384, resource_limits=None):
     config = await setup_store(db)
     folder = Path(db.db_path).parent
+    if resource_limits is not None:
+        from rka.services.embedding_config import EmbeddingConfigService
+        config.config["resource_limits"] = resource_limits
+        EmbeddingConfigService(folder).save_config(config, "system")
     candidate = folder / "candidate.json"
     config.config["dim"] = dim
     candidate.write_text(config.model_dump_json())
@@ -27,8 +31,9 @@ async def prepare(db, dim=384):
 
 
 @pytest.mark.asyncio
-async def test_populated_dimension_transition_and_real_worker_queue(db):
-    args = await prepare(db)
+@pytest.mark.parametrize("limits", [None, {"max_input_bytes": 16384}])
+async def test_populated_dimension_transition_and_real_worker_queue(db, limits):
+    args = await prepare(db, resource_limits=limits)
     result = await recovery.recover_embedding_index(**args)
     assert result["status"] == "prepared" and result["backfill"] == "queued"
     assert (Path(result["backup_directory"]) / "database.sqlite").is_file()
@@ -51,8 +56,9 @@ async def test_populated_dimension_transition_and_real_worker_queue(db):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stage", ["after_intent", "before_database_commit", "after_database_commit", "after_config_publish"])
 @pytest.mark.parametrize("operation", ["resume", "rollback"])
-async def test_failure_boundaries_resume_or_restore_coherent_pair(db, monkeypatch, stage, operation):
-    args = await prepare(db)
+@pytest.mark.parametrize("limits", [None, {"max_input_bytes": 16384}])
+async def test_failure_boundaries_resume_or_restore_coherent_pair(db, monkeypatch, stage, operation, limits):
+    args = await prepare(db, resource_limits=limits)
     original_config = (args["data_dir"] / "embedding_config.json").read_bytes()
     def fail(at):
         if at == stage:

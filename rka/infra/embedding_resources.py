@@ -167,6 +167,20 @@ def native_resource_limits(config=None):
                    max_padding_bytes=min(limits.max_padding_bytes, 4096))
 
 
+def embedding_resource_limits(backend: str, config=None) -> EmbeddingResourceLimits:
+    """Pure shared policy for runtime construction and offline config validation.
+
+    Does not load a model, create a provider client, or inspect live state.
+    Native inference retains its tighter effective limits; HTTP opt-ins must
+    not widen the native configuration ceiling.
+    """
+    if backend in {"openai_compat", "ollama"}:
+        return HTTPEmbeddingResourceLimits.from_config(config)
+    if backend == "fastembed":
+        return native_resource_limits(config)
+    raise ValueError("unknown embedding backend for resource limits")
+
+
 def request_timeout(value: Any) -> float:
     if isinstance(value, bool):
         raise ValueError("timeout_seconds must be positive and finite")
