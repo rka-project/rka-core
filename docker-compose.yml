@@ -114,6 +114,7 @@ services:
       - rka-data:/data
     environment:
       RKA_EMBEDDINGS_ENABLED: "true"
+      RKA_JOB_SHUTDOWN_GRACE_SECONDS: "${RKA_JOB_SHUTDOWN_GRACE_SECONDS:-20}"
       # v2.5.4 (mis_01KRSP44W7BDZH11PZRGXH1WM4): context-engine weighted-sum
       # coefficients. Interpolated from shell env so eval-v2 sweep can swap
       # configs by setting these before `docker compose up -d --force-recreate`.
@@ -146,6 +147,8 @@ services:
     # v2.7.0.1: bound container RAM. Override via RKA_WORKER_MEM_LIMIT=8g
     # for projects with large embedding queues.
     mem_limit: ${RKA_WORKER_MEM_LIMIT:-4g}
+    # 20s in-flight drain, then leave time for lease/DB/provider cleanup.
+    stop_grace_period: ${RKA_WORKER_STOP_GRACE_PERIOD:-30s}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

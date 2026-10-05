@@ -50,8 +50,13 @@ def _read_config(path: Path):
             if not isinstance(sub.get("base_url"), str) or not sub["base_url"]:
                 raise EmbeddingInspectionError("endpoint_missing")
             model = (explicit or "").strip() or model
-        from rka.infra.embedding_resources import EmbeddingResourceLimits
-        EmbeddingResourceLimits.from_config(sub.get("resource_limits"))
+        from rka.infra.embedding_resources import embedding_resource_limits
+        try:
+            embedding_resource_limits(config.backend, sub.get("resource_limits"))
+        except (ValueError, TypeError):
+            # Config keys/values can contain secrets. Preserve a useful category
+            # without echoing the provider's config or exception text.
+            raise EmbeddingInspectionError("resource_limits_invalid") from None
         if "timeout_seconds" in sub:
             from rka.infra.embedding_resources import request_timeout
             request_timeout(sub["timeout_seconds"])
