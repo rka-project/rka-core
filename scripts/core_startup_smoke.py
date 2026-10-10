@@ -101,17 +101,25 @@ def _probe_public_rest_contract(base_url: str) -> None:
                 f"project-scoped public call returned {unscoped.status_code}, expected 422"
             )
 
+        note_input = {
+            "content": "The disposable run observed a 12 percent improvement.",
+            "type": "note", "source": "executor", "request_id": "startup-note-1",
+        }
         note = client.post(
             "/api/notes",
             headers=headers,
-            json={
-                "content": "The disposable run observed a 12 percent improvement.",
-                "type": "note",
-                "source": "executor",
-            },
+            json=note_input,
         )
         note.raise_for_status()
         note_payload = note.json()
+        replay = client.post("/api/notes", headers=headers, json=note_input)
+        replay.raise_for_status()
+        if replay.json() != note_payload:
+            raise RuntimeError("public keyed note retry did not replay its creation snapshot")
+        receipt = client.get("/api/notes/write-receipts/startup-note-1", headers=headers)
+        receipt.raise_for_status()
+        if receipt.json().get("entry") != note_payload:
+            raise RuntimeError("public note receipt omitted the original creation snapshot")
         note_read = client.get(f"/api/notes/{note_payload['id']}", headers=headers)
         note_read.raise_for_status()
         if note_read.json().get("content") != note_payload["content"]:
@@ -229,6 +237,7 @@ def _assert_migration_state(db_path: Path, *, require_vec: bool) -> None:
         )
 
     required_tables = {
+        "journal_write_receipts",
         "projects",
         "journal",
         "decisions",
@@ -319,6 +328,21 @@ async def _probe_mcp(
             payload = json.loads(rendered)
             if payload.get("status") not in {"ok", "healthy"}:
                 raise RuntimeError(f"unexpected MCP health result: {rendered}")
+
+            # Read the REST-created receipt through the actual stdio transport.
+            receipt_result = await session.call_tool("rka_query", {"args": {
+                "operation": "note_write_receipt", "project_id": "prj_public_contract_smoke",
+                "request_id": "startup-note-1",
+            }})
+            if receipt_result.isError:
+                raise RuntimeError(f"MCP receipt read failed: {receipt_result.content}")
+            receipt = json.loads("\n".join(
+                block.text for block in receipt_result.content if hasattr(block, "text")
+            ))
+            if (receipt.get("request_id") != "startup-note-1"
+                    or receipt.get("project_id") != "prj_public_contract_smoke"
+                    or receipt.get("journal_id") != receipt.get("entry", {}).get("id")):
+                raise RuntimeError("MCP receipt omitted scoped creation identity")
 
 
 def main() -> None:

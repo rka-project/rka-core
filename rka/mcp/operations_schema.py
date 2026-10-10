@@ -2122,7 +2122,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "signature": (
             "rka_execute(operation='record_note', *, project_id, content, "
             "source='executor', type='note', confidence='hypothesis', "
-            "importance='normal', verbatim_input=None, capture_mode='unknown', phase=None, "
+            "importance='normal', verbatim_input=None, capture_mode='unknown', request_id=None, phase=None, "
             "tags=None, provenance={'related_decisions':[...], "
             "'related_literature':[...], 'related_mission':..., "
             "'supersedes':...})"
@@ -2131,6 +2131,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "optional_fields": [
             "source",
             "capture_mode",
+            "request_id",
             "type",
             "confidence",
             "importance",
@@ -2174,12 +2175,34 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             "update_note",
             "ingest_document",
             "record_decision",
+            "note_write_receipt",
         ],
         "notes": (
             "Use explicit raw_capture for supplied original text or agent_restatement for an agent body. "
             "Omitted mode is unknown, not inferred. PI source requires verbatim_input unless raw_capture "
-            "explicitly snapshots supplied content on creation. Content edits never overwrite originals."
+            "explicitly snapshots supplied content on creation. Content edits never overwrite originals. "
+            "Optional request_id (1..128 ASCII letters/digits/._:-, first alphanumeric) enables "
+            "project-scoped creation replay. Keep the validated payload unchanged; conflicts return 409. "
+            "Retries return the original creation snapshot, not the current entity. After a timeout "
+            "query note_write_receipt; never silently retry without the key against an older server."
         ),
+    },
+    "note_write_receipt": {
+        "operation": "note_write_receipt", "tool": "rka_query",
+        "category": "journal", "role_tag": "ANY",
+        "summary": "Read the immutable acknowledgement for a keyed journal creation.",
+        "signature": "rka_query(operation='note_write_receipt', *, project_id, request_id)",
+        "required_fields": ["project_id", "request_id"],
+        "optional_fields": [], "enums": {},
+        "examples": [{"description": "Recover an uncertain single-note write.", "call": {
+            "operation": "note_write_receipt", "project_id": "prj_01ABC...", "request_id": "note-recovery-1",
+        }}],
+        "related_operations": ["record_note", "entity"],
+        "notes": "Returns project, request, entity ID, intent/content/original hashes and the initial "
+        "snapshot. Not current state, an authorship authentication, or a semantic-readiness receipt. "
+        "404 means no visible committed receipt; another request may still be in flight. Retry with "
+        "the same key and payload only. Receipts survive restart but are database-local and excluded "
+        "from knowledge packs; they are removed only with explicit project deletion.",
     },
     "ingest_document": {
         "operation": "ingest_document",

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+
+from pydantic import TypeAdapter
 
 from rka.infra.ids import generate_id
 from rka.models.journal import (
-    JournalAttributionCorrection, JournalAttributionRevision,
-    JournalEntry, JournalEntryCreate, JournalEntryUpdate,
+    JournalAttributionCorrection,
+    JournalAttributionRevision,
+    JournalEntry,
+    JournalEntryCreate,
+    JournalEntryUpdate,
+    JournalRequestId,
+    JournalWriteReceipt,
     validate_capture,
 )
 from rka.services.base import BaseService, _now
@@ -26,6 +35,10 @@ class JournalAttributionError(ValueError):
 
 class JournalAttributionConflict(JournalAttributionError):
     """A stale revision or a reused request ID with different intent."""
+
+
+class JournalWriteConflict(ValueError):
+    """A creation request ID was already committed with different intent."""
 
 
 class NoteService(BaseService):
@@ -53,7 +66,7 @@ class NoteService(BaseService):
         )
 
     async def create(self, data: JournalEntryCreate, actor: str | None = None) -> JournalEntry:
-        """Create a new journal entry."""
+        """Create atomically; keyed retries replay the original creation snapshot."""
         data = JournalEntryCreate.model_validate(data.model_dump())
         entry_id = generate_id("journal")
         # An import executor is not the author of the supplied note. Keep
@@ -61,6 +74,14 @@ class NoteService(BaseService):
         # provenance (events, audit and graph links).
         source = data.source
         actor_val = self._validate_actor(actor if actor is not None else source)
+        # Hash validated intent, including defaults, exact text and actor. Do
+        # not trim text or infer equivalence from content alone. Key ordering
+        # is canonical; list ordering/null versus [] remain caller intent.
+        request_hash = hashlib.sha256(json.dumps(
+            {"version": "journal-create-v1", "project_id": self.project_id,
+             "actor": actor_val, "payload": data.model_dump(exclude={"request_id"})},
+            ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest() if data.request_id is not None else None
         related_decisions = (
             None
             if data.related_decisions is None
@@ -73,6 +94,12 @@ class NoteService(BaseService):
         )
 
         async with self.db.transaction():
+            if data.request_id is not None:
+                previous = await self.write_receipt(data.request_id)
+                if previous is not None:
+                    if previous.request_hash != request_hash:
+                        raise JournalWriteConflict("request_id already used with different creation data")
+                    return previous.entry
             await self.db.execute(
                 """INSERT INTO journal
                    (id, type, content, summary, source, phase, verbatim_input, capture_mode,
@@ -207,7 +234,38 @@ class NoteService(BaseService):
             except Exception as exc:  # extra defense-in-depth
                 logger.warning("post_journal_create hook fire failed: %s", exc)
 
-        return await self.get(entry_id)
+            # Snapshot and receipt share the aggregate transaction. A later
+            # edit, failed response or retry must not change this acknowledgement.
+            result = await self.get(entry_id)
+            if data.request_id is not None:
+                await self.db.execute(
+                    """INSERT INTO journal_write_receipts
+                       (project_id, request_id, journal_id, hash_version, request_hash,
+                        content_sha256, verbatim_input_sha256, actor, entry_json)
+                       VALUES (?, ?, ?, 'journal-create-v1', ?, ?, ?, ?, ?)""",
+                    [self.project_id, data.request_id, entry_id, request_hash,
+                     hashlib.sha256(data.content.encode("utf-8")).hexdigest(),
+                     (hashlib.sha256(data.verbatim_input.encode("utf-8")).hexdigest()
+                      if data.verbatim_input is not None else None),
+                     actor_val, result.model_dump_json()],
+                )
+        return result
+
+    async def write_receipt(self, request_id: str) -> JournalWriteReceipt | None:
+        """Read a committed creation snapshot in this project, not live note state.
+
+        No receipt means no visible acknowledgement, not proof that another
+        request cannot still be in flight. Retry only with the same key/intent.
+        """
+        request_id = TypeAdapter(JournalRequestId).validate_python(request_id)
+        row = await self.db.fetchone(
+            "SELECT * FROM journal_write_receipts WHERE project_id = ? AND request_id = ?",
+            [self.project_id, request_id],
+        )
+        if row is None:
+            return None
+        return JournalWriteReceipt(**{key: value for key, value in row.items() if key != "entry_json"},
+                                   entry=JournalEntry.model_validate_json(row["entry_json"]))
 
     async def get(self, entry_id: str) -> JournalEntry | None:
         """Get a single journal entry by ID."""

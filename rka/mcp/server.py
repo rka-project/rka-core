@@ -769,6 +769,16 @@ def _raise_with_detail(r: httpx.Response) -> None:
 # Knowledge Management
 # ============================================================
 
+def _note_creation_message(entry: dict, request_id: str | None) -> str:
+    if request_id is None:
+        return f"Created {entry['id']} [{entry['type']}] confidence={entry['confidence']}"
+    return (
+        f"Acknowledged {entry['id']} [{entry['type']}] request_id={request_id}. "
+        "Original creation snapshot, not current note state. "
+        "Read note_write_receipt with this project_id/request_id to verify the receipt."
+    )
+
+
 @tool(tier="always_on", category="core")
 async def rka_add_note(
     content: str,
@@ -789,6 +799,7 @@ async def rka_add_note(
     *,
     project_id: str,
     capture_mode: JournalCaptureModeLit = "unknown",
+    request_id: str | None = None,
 ) -> str:
     """PRIMARY FIELD: content. Add a research journal entry.
 
@@ -810,6 +821,7 @@ async def rka_add_note(
         pinned: Whether to pin the entry for quick access
         capture_mode: unknown (default), raw_capture, or agent_restatement. Raw creation
             retains supplied verbatim_input or snapshots content exactly when absent.
+        request_id: Optional stable creation key. Retries replay the original snapshot.
     """
     # v2.7.0.7 — summary/status/pinned now forwarded. NoteCreate accepts them
     # but the adapter previously omitted them, so the RecordNoteArgs typed
@@ -825,12 +837,13 @@ async def rka_add_note(
             "tags": tags, "summary": summary, "status": status,
             "pinned": pinned,
             "capture_mode": capture_mode,
+            "request_id": request_id,
         }
         r = await c.post("/api/notes", json={k: v for k, v in body.items() if v is not None})
         _raise_with_detail(r)
         d = r.json()
         _record_entity("journal", d["id"], content)
-        return f"Created {d['id']} [{d['type']}] confidence={d['confidence']}"
+        return _note_creation_message(d, request_id)
 
 
 @tool(category="journal")
@@ -911,6 +924,19 @@ async def rka_correct_note_attribution(
     )
     async with _client(project_id) as c:
         response = await c.post(f"/api/notes/{id}/attribution-corrections", json=data.model_dump())
+        _raise_with_detail(response)
+        return json.dumps(response.json(), ensure_ascii=False)
+
+
+@tool(category="journal")
+async def rka_get_note_write_receipt(request_id: str, *, project_id: str) -> str:
+    """Read an immutable creation acknowledgement, not the current journal entity."""
+    from pydantic import TypeAdapter
+    from rka.models.journal import JournalRequestId
+
+    request_id = TypeAdapter(JournalRequestId).validate_python(request_id)
+    async with _client(project_id) as c:
+        response = await c.get(f"/api/notes/write-receipts/{request_id}")
         _raise_with_detail(response)
         return json.dumps(response.json(), ensure_ascii=False)
 
@@ -7746,6 +7772,7 @@ from typing import Literal as _Literal
 QueryScopeLit = _Literal[
     "status", "context", "search", "entity", "journal", "literature",
     "note_attribution_history",
+    "note_write_receipt",
     "mission", "report", "checkpoints", "decision_tree", "calibration_metrics",
     "hooks", "hook_executions", "brain_notifications", "research_map",
     "review_queue", "clusters", "claims", "interpretation_candidates", "sources",
@@ -8365,6 +8392,7 @@ async def rka_record_note(
     tags: list[str] | None = None,
     provenance: dict | None = None,
     capture_mode: JournalCaptureModeLit = "unknown",
+    request_id: str | None = None,
 ) -> str:
     """[BRAIN/EXECUTOR/PI] RECORD a journal entry (note, log, directive).
 
@@ -8389,6 +8417,7 @@ async def rka_record_note(
         importance: critical | high | normal | low | archived.
         verbatim_input: Exact original; PI source requires it unless raw capture snapshots content.
         capture_mode: unknown (default), raw_capture, or agent_restatement.
+        request_id: Optional stable creation key; reuse unchanged after a timeout.
         phase: Research phase override.
         tags: Free-form tag list.
         provenance: Optional dict with related_decisions / related_literature /
@@ -8406,6 +8435,7 @@ async def rka_record_note(
         "content": content, "type": type, "source": source,
         "phase": phase, "verbatim_input": verbatim_input,
         "capture_mode": capture_mode,
+        "request_id": request_id,
         "related_decisions": prov.get("related_decisions"),
         "related_literature": prov.get("related_literature"),
         "related_mission": prov.get("related_mission"),
@@ -8417,7 +8447,7 @@ async def rka_record_note(
         _raise_with_detail(r)
         d = r.json()
         _record_entity("journal", d["id"], content)
-        return f"Created {d['id']} [{d['type']}] confidence={d['confidence']}"
+        return _note_creation_message(d, request_id)
 
 
 @tool(tier=_TIER_ALWAYS_ON, category="verb")

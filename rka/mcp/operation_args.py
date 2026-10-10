@@ -67,7 +67,7 @@ from rka.models.semantic_patch import (
 )
 from rka.models.outline import OutlineProposalRequest
 from rka.models.decision import DecisionUpdate
-from rka.models.journal import JournalAttributionCorrection, JournalEntryCreate, JournalEntryUpdate
+from rka.models.journal import JournalAttributionCorrection, JournalEntryCreate, JournalEntryUpdate, JournalRequestId
 from rka.mcp._enums import JournalCaptureModeLit
 from rka.models.literature import LiteratureUpdate
 
@@ -536,6 +536,13 @@ class QuerySourcesArgs(ProjectScopedArgs, PaginatedFiltersMixin):
         Optional[str],
         Field(default=None, description="Optional src_ id for provenance detail."),
     ] = None
+
+
+class QueryNoteWriteReceiptArgs(ProjectScopedArgs):
+    """[ANY] Read the original committed creation snapshot, not current note state."""
+
+    operation: Literal["note_write_receipt"] = "note_write_receipt"
+    request_id: JournalRequestId
 
 
 class QueryNoteAttributionHistoryArgs(ProjectScopedArgs):
@@ -1343,6 +1350,7 @@ QueryArgsUnion = Annotated[
         QueryEntityArgs,
         # List-mode
         QueryJournalArgs,
+        QueryNoteWriteReceiptArgs,
         QueryNoteAttributionHistoryArgs,
         QueryLiteratureArgs,
         QueryMissionArgs,
@@ -1485,6 +1493,10 @@ class RecordNoteArgs(ProjectScopedArgs):
     """
 
     operation: Literal["record_note"] = "record_note"
+    request_id: JournalRequestId | None = Field(
+        default=None, description="Optional project-scoped creation key. Same intent replays "
+        "the initial snapshot; different intent conflicts. Query note_write_receipt after a timeout.",
+    )
     capture_mode: JournalCaptureModeLit = Field(
         default="unknown",
         description="Omission makes no capture claim. Use raw_capture only for supplied "
@@ -5350,6 +5362,7 @@ __all__ = [
     "QueryInterpretationCandidatesArgs",
     "QuerySourcesArgs",
     "QueryNoteAttributionHistoryArgs",
+    "QueryNoteWriteReceiptArgs",
     "QueryExperimentsArgs",
     "QueryExperimentRunsArgs",
     "QueryExperimentObservationsArgs",

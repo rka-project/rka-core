@@ -913,6 +913,7 @@ _QUERY_DISPATCH: dict[str, str] = {
     "interpretation_candidates": "rka_get_interpretation_candidates",
     "sources": "rka_get_sources",
     "note_attribution_history": "rka_get_note_attribution_history",
+    "note_write_receipt": "rka_get_note_write_receipt",
     "experiments": "rka_get_experiments",
     "experiment_runs": "rka_get_experiment_runs",
     "experiment_observations": "rka_get_experiment_observations",
@@ -1235,6 +1236,9 @@ async def dispatch_query(
             limit=limit or f.get("limit", 50),
             project_id=project_id,
         )
+
+    if scope == "note_write_receipt":
+        return await legacy(request_id=f.get("request_id") or id, project_id=project_id)
 
     if scope == "note_attribution_history":
         return await legacy(
@@ -1615,6 +1619,7 @@ async def dispatch_record_note(
     status: str | None = None,
     pinned: bool | None = None,
     capture_mode: str = "unknown",
+    request_id: str | None = None,
 ) -> str:
     """[ANY] Record a journal entry (create or ingest_document).
 
@@ -1647,6 +1652,9 @@ async def dispatch_record_note(
         "supersedes": None,
     }
     merged = _unpack_provenance(provenance, explicit, _NOTE_PROVENANCE_KEYS)
+
+    if action != "create" and request_id is not None:
+        return _err("invalid_field", "request_id is supported only for single-note creation")
 
     if action == "ingest_document":
         return await _legacy("rka_ingest_document")(
@@ -1695,6 +1703,7 @@ async def dispatch_record_note(
         status=status,
         pinned=pinned,
         capture_mode=capture_mode,
+        request_id=request_id,
         project_id=project_id,
     )
 
@@ -2659,6 +2668,7 @@ async def dispatch_execute(
             status=kw.get("status"),
             pinned=kw.get("pinned"),
             capture_mode=kw.get("capture_mode", "unknown"),
+            request_id=kw.get("request_id"),
         )
 
     # --- record_decision (also handles supersede_decision in record form) ---
@@ -3206,6 +3216,8 @@ async def dispatch_query_typed(args: "BaseModel") -> str:  # type: ignore[name-d
     kw_all.pop("project_id", None)
 
     typed_filters = dict(kw_all.get("filters") or {})
+    if op == "note_write_receipt":
+        typed_filters["request_id"] = kw_all["request_id"]
     if op == "note_attribution_history":
         typed_filters["after_revision"] = kw_all["after_revision"]
     if op == "semantic_patch_proposals" and "status" in kw_all:
