@@ -975,6 +975,7 @@ async def dispatch_query(
     id: str | None = None,
     query: str | None = None,
     limit: int | None = None,
+    offset: int = 0,
     filters: dict[str, Any] | None = None,
     ids: list[str] | None = None,
     include_sources: bool = False,
@@ -1025,13 +1026,15 @@ async def dispatch_query(
     # --- Scopes with NO kwargs other than project_id ---
     if scope in (
         "status",
-        "pending_maintenance",
         "research_map",
         "graph_stats",
         "calibration_metrics",
         "integrity",
     ):
         return await legacy(project_id=project_id)
+
+    if scope == "pending_maintenance":
+        return await legacy(project_id=project_id, limit=limit if limit is not None else 50, offset=offset)
 
     # --- search / multi_hop ---
     if scope == "search":
@@ -3215,6 +3218,7 @@ async def dispatch_query_typed(args: "BaseModel") -> str:  # type: ignore[name-d
             id=kw_all.get("id"),
             query=kw_all.get("query"),
             limit=kw_all.get("limit"),
+            offset=kw_all.get("offset", 0),
             filters=typed_filters or None,
             ids=kw_all.get("ids"),
             include_sources=kw_all.get("include_sources", False),

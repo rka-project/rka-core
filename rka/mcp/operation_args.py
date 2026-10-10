@@ -323,6 +323,7 @@ class QueryJournalArgs(ProjectScopedArgs, PaginatedFiltersMixin):
     """
 
     operation: Literal["journal"] = "journal"
+    limit: Annotated[Optional[int], Field(default=None, le=200, description="Max entries, at most 200 (default 20). Full content: entity operation.")] = None
 
 
 class QueryLiteratureArgs(ProjectScopedArgs, PaginatedFiltersMixin):
@@ -1163,6 +1164,8 @@ class QueryPendingMaintenanceArgs(ProjectScopedArgs):
     """[BRAIN] Provenance gaps, untagged entries, orphans, etc."""
 
     operation: Literal["pending_maintenance"] = "pending_maintenance"
+    limit: Annotated[Optional[int], Field(default=None, ge=1, le=200, description="Issue occurrences per category, 1–200 (default 50).")] = None
+    offset: Annotated[int, Field(default=0, ge=0, description="Offset within each category; use returned next_offset.")] = 0
 
 
 # ---------------------------------------------------------------------------
@@ -1180,7 +1183,7 @@ class QueryChangelogArgs(ProjectScopedArgs):
 
     limit: Annotated[
         Optional[int],
-        Field(default=None, description="Cap on result count (default 50)."),
+        Field(default=None, le=200, description="Cap on result count, at most 200 (default 50); use changes_since for cursor pagination."),
     ] = None
     filters: Annotated[
         dict[str, Any],

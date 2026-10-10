@@ -30,6 +30,24 @@ class MaintenanceService(BaseService):
         appended to high-traffic responses (rka_get_status, rka_search).
         Per dec_01KQQPER3XSSBACGZANFJCVQ66 / dec_01KQQRZRY9NN0PYQNXPW07D732.
         """
+        async with self.db.transaction(write=False):
+            counts = await self._get_backlog_counts()
+        top = sorted(
+            [{"name": k, "count": v} for k, v in counts.items() if v > 0],
+            key=lambda d: d["count"], reverse=True,
+        )[:3]
+        return {
+            "total_items": sum(counts.values()), "top_categories": top,
+            "scope": "project", "project_id": self.project_id,
+            "count_unit": "issue_occurrences",
+            "advisory_limits": dict(self._ADVISORY_LIMITS),
+        }
+
+    # Preserve existing advisory selection policies; these are not exhaustive
+    # counts of every possible lifecycle/gate concern in the project.
+    _ADVISORY_LIMITS = {"missions_without_upstream_gate": 10, "directive_dependency_gaps": 100}
+
+    async def _get_backlog_counts(self) -> dict[str, int]:
         pid = self.project_id
 
         # Each query is a COUNT(*) over an indexed table. Mirrors the WHERE
@@ -142,29 +160,32 @@ class MaintenanceService(BaseService):
 
         from rka.services.lifecycle import DirectiveDependencyService
         counts["directive_dependency_gaps"] = (await DirectiveDependencyService(self.db, project_id=pid).review_candidates())["count"]
-        total = sum(counts.values())
-        top = sorted(
-            [{"name": k, "count": v} for k, v in counts.items() if v > 0],
-            key=lambda d: d["count"],
-            reverse=True,
-        )[:3]
-        return {"total_items": total, "top_categories": top}
+        return counts
 
-    async def get_pending_maintenance(self) -> dict[str, Any]:
-        """Run all gap-detection queries and return a compact manifest."""
+    async def get_pending_maintenance(self, *, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Page each category separately; totals count issues, not unique entities."""
+        if not 1 <= limit <= 200 or offset < 0:
+            raise ValueError("limit must be between 1 and 200; offset must be non-negative")
+        # Count and page must observe the same SQLite snapshot, even when a
+        # worker or another connection changes records during this request.
+        async with self.db.transaction(write=False):
+            return await self._get_pending_maintenance(limit=limit, offset=offset)
+
+    async def _get_pending_maintenance(self, *, limit: int, offset: int) -> dict[str, Any]:
         pid = self.project_id
+        page = {"limit": limit, "offset": offset}
 
-        entries_without_tags = await self._entries_without_tags(pid)
-        entries_without_claims = await self._entries_without_claims(pid)
-        clusters_needing_synthesis = await self._clusters_needing_synthesis(pid)
-        flagged_contradictions = await self._flagged_contradictions(pid)
-        entries_missing_cross_refs = await self._entries_missing_cross_refs(pid)
-        decisions_without_justified_by = await self._decisions_without_justified_by(pid)
-        missions_without_motivated_by = await self._missions_without_motivated_by(pid)
+        entries_without_tags = await self._entries_without_tags(pid, **page)
+        entries_without_claims = await self._entries_without_claims(pid, **page)
+        clusters_needing_synthesis = await self._clusters_needing_synthesis(pid, **page)
+        flagged_contradictions = await self._flagged_contradictions(pid, **page)
+        entries_missing_cross_refs = await self._entries_missing_cross_refs(pid, **page)
+        decisions_without_justified_by = await self._decisions_without_justified_by(pid, **page)
+        missions_without_motivated_by = await self._missions_without_motivated_by(pid, **page)
         missions_without_upstream_gate = await self._missions_without_upstream_gate(pid)
-        unassigned_clusters = await self._unassigned_clusters(pid)
-        stale_claims = await self._stale_claims(pid)
-        stale_clusters = await self._stale_clusters(pid)
+        unassigned_clusters = await self._unassigned_clusters(pid, **page)
+        stale_claims = await self._stale_claims(pid, **page)
+        stale_clusters = await self._stale_clusters(pid, **page)
 
         from rka.services.lifecycle import DirectiveDependencyService
         directive_dependencies = await DirectiveDependencyService(self.db, project_id=pid).review_candidates()
@@ -183,19 +204,45 @@ class MaintenanceService(BaseService):
             "stale_clusters": stale_clusters,
         }
 
-        total_items = sum(len(c["ids"]) for c in categories.values())
-        # Estimate: ~1 tool call per item to fix
-        estimated_tool_calls = sum(c["fix_calls_per_item"] * len(c["ids"]) for c in categories.values())
+        counts = await self._get_backlog_counts()
+        for name, category in categories.items():
+            if name == "directive_dependency_gaps":
+                # One directive can have multiple dependency issues. Page the
+                # pairs, not the deduplicated IDs, to avoid losing candidates.
+                candidates = category["candidates"][offset:offset + limit]
+                category["candidates"] = candidates
+                category["ids"] = sorted({row["id"] for row in candidates})
+                returned = len(candidates)
+            else:
+                if name == "missions_without_upstream_gate":
+                    category["ids"] = category["ids"][offset:offset + limit]
+                returned = len(category["ids"])
+            category.update({
+                "count": counts[name], "category_total": counts[name],
+                "returned_count": returned, "limit": limit, "offset": offset,
+                "has_more": offset + returned < counts[name],
+                "scope": "project", "count_unit": "issue_occurrences",
+            })
+            category["next_offset"] = offset + returned if category["has_more"] else None
+            if name in self._ADVISORY_LIMITS:
+                category["advisory_limit"] = self._ADVISORY_LIMITS[name]
+        total_items = sum(counts.values())
+        estimated_tool_calls = sum(c["fix_calls_per_item"] * c["count"] for c in categories.values())
 
         return {
             "total_items": total_items,
+            "returned_count": sum(c["returned_count"] for c in categories.values()),
+            "scope": "project", "project_id": pid,
+            "count_unit": "issue_occurrences", "limit": limit, "offset": offset,
+            "has_more": any(c["has_more"] for c in categories.values()),
+            "advisory_limits": dict(self._ADVISORY_LIMITS),
             "estimated_tool_calls": estimated_tool_calls,
             "categories": categories,
         }
 
     # ---- Individual gap-detection queries ----
 
-    async def _entries_without_tags(self, pid: str) -> dict:
+    async def _entries_without_tags(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT j.id FROM journal j
                WHERE j.project_id = ?
@@ -204,8 +251,8 @@ class MaintenanceService(BaseService):
                      SELECT 1 FROM tags t
                      WHERE t.entity_type = 'journal' AND t.entity_id = j.id AND t.project_id = ?
                  )
-               ORDER BY j.created_at DESC LIMIT 50""",
-            [pid, pid],
+               ORDER BY j.created_at DESC, j.id LIMIT ? OFFSET ?""",
+            [pid, pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -215,7 +262,7 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _entries_without_claims(self, pid: str) -> dict:
+    async def _entries_without_claims(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT j.id FROM journal j
                WHERE j.project_id = ?
@@ -225,8 +272,8 @@ class MaintenanceService(BaseService):
                      SELECT 1 FROM claims c
                      WHERE c.source_entry_id = j.id AND c.project_id = ?
                  )
-               ORDER BY j.created_at DESC LIMIT 50""",
-            [pid, pid],
+               ORDER BY j.created_at DESC, j.id LIMIT ? OFFSET ?""",
+            [pid, pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -236,7 +283,7 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 2,
         }
 
-    async def _clusters_needing_synthesis(self, pid: str) -> dict:
+    async def _clusters_needing_synthesis(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         # Surfaces both: (a) clusters with claims but no synthesis yet, and
         # (b) clusters whose existing synthesis was invalidated by a downstream
         # event (e.g. a contradicts edge inserted between cluster members; see
@@ -250,8 +297,8 @@ class MaintenanceService(BaseService):
                      (ec.synthesis IS NULL OR ec.synthesis = '')
                      OR ec.needs_reprocessing = 1
                  )
-               ORDER BY ec.needs_reprocessing DESC, ec.claim_count DESC LIMIT 50""",
-            [pid],
+               ORDER BY ec.needs_reprocessing DESC, ec.claim_count DESC, ec.id LIMIT ? OFFSET ?""",
+            [pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -261,14 +308,14 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _flagged_contradictions(self, pid: str) -> dict:
+    async def _flagged_contradictions(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT rq.id, rq.item_id FROM review_queue rq
                WHERE rq.project_id = ?
                  AND rq.flag = 'potential_contradiction'
                  AND rq.status = 'pending'
-               ORDER BY rq.priority DESC LIMIT 50""",
-            [pid],
+               ORDER BY rq.priority DESC, rq.id LIMIT ? OFFSET ?""",
+            [pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -278,7 +325,7 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _entries_missing_cross_refs(self, pid: str) -> dict:
+    async def _entries_missing_cross_refs(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT j.id FROM journal j
                WHERE j.project_id = ?
@@ -292,8 +339,8 @@ class MaintenanceService(BaseService):
                      SELECT 1 FROM entity_links el
                      WHERE el.target_id = j.id AND el.project_id = ?
                  )
-               ORDER BY j.created_at DESC LIMIT 50""",
-            [pid, pid, pid],
+               ORDER BY j.created_at DESC, j.id LIMIT ? OFFSET ?""",
+            [pid, pid, pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -303,7 +350,7 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _decisions_without_justified_by(self, pid: str) -> dict:
+    async def _decisions_without_justified_by(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT d.id FROM decisions d
                WHERE d.project_id = ?
@@ -313,8 +360,8 @@ class MaintenanceService(BaseService):
                      WHERE el.source_type = 'decision' AND el.source_id = d.id
                        AND el.link_type = 'justified_by' AND el.project_id = ?
                  )
-               ORDER BY d.created_at DESC LIMIT 50""",
-            [pid, pid],
+               ORDER BY d.created_at DESC, d.id LIMIT ? OFFSET ?""",
+            [pid, pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -324,7 +371,7 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _missions_without_motivated_by(self, pid: str) -> dict:
+    async def _missions_without_motivated_by(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         # Affordance F (Mission B / mis_01KR209WY4M6WQFEXRH79KC2ZF):
         # explained-gap suppression. A mission tagged 'motivated-by-explained'
         # opts out of this advisory category — used for missions whose
@@ -345,8 +392,8 @@ class MaintenanceService(BaseService):
                      WHERE t.entity_type = 'mission' AND t.entity_id = m.id
                        AND t.tag = 'motivated-by-explained' AND t.project_id = ?
                  )
-               ORDER BY m.created_at DESC LIMIT 50""",
-            [pid, pid, pid],
+               ORDER BY m.created_at DESC, m.id LIMIT ? OFFSET ?""",
+            [pid, pid, pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -356,14 +403,14 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _unassigned_clusters(self, pid: str) -> dict:
+    async def _unassigned_clusters(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             """SELECT ec.id FROM evidence_clusters ec
                WHERE ec.project_id = ?
                  AND (ec.research_question_id IS NULL OR ec.research_question_id = '')
                  AND ec.claim_count > 0
-               ORDER BY ec.claim_count DESC LIMIT 50""",
-            [pid],
+               ORDER BY ec.claim_count DESC, ec.id LIMIT ? OFFSET ?""",
+            [pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -373,12 +420,12 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _stale_claims(self, pid: str) -> dict:
+    async def _stale_claims(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             f"""SELECT id FROM claims
                WHERE project_id = ? AND {pending_review_sql('claim')}
-               ORDER BY updated_at DESC LIMIT 50""",
-            [pid],
+               ORDER BY updated_at DESC, id LIMIT ? OFFSET ?""",
+            [pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -388,12 +435,12 @@ class MaintenanceService(BaseService):
             "fix_calls_per_item": 1,
         }
 
-    async def _stale_clusters(self, pid: str) -> dict:
+    async def _stale_clusters(self, pid: str, *, limit: int = 50, offset: int = 0) -> dict:
         rows = await self.db.fetchall(
             f"""SELECT id FROM evidence_clusters
                WHERE project_id = ? AND {pending_review_sql('cluster')}
-               ORDER BY updated_at DESC LIMIT 50""",
-            [pid],
+               ORDER BY updated_at DESC, id LIMIT ? OFFSET ?""",
+            [pid, limit, offset],
         )
         return {
             "count": len(rows),
@@ -423,7 +470,7 @@ class MaintenanceService(BaseService):
                WHERE m.project_id = ?
                  AND m.status NOT IN ('cancelled')
                  AND m.motivated_by_decision IS NOT NULL
-               ORDER BY m.created_at DESC""",
+               ORDER BY m.created_at DESC, m.id""",
             [pid],
         )
         if not candidates:
