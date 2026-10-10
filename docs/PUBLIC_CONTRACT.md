@@ -74,7 +74,9 @@ behavior is therefore operation-specific:
 - Revision-guarded writes must reuse the revision they actually read. A stale
   write fails with 409 and requires a new read and an explicit reconciliation;
   it must not be silently replayed against the newer revision.
-- General create operations, including journal entries, decisions,
+- Journal creation with an explicit `request_id` uses the recovery contract
+  below. Omitting/nulling that field retains the existing non-idempotent write.
+- Other create operations, including unkeyed journal entries, decisions,
   literature, missions, projects, and most other POST requests, are not
   covered by a generic idempotency promise. After a timeout or lost response,
   query the relevant public read/change surface and reconcile before deciding
@@ -83,6 +85,73 @@ behavior is therefore operation-specific:
 These rules describe the current implementation. The architectural goal that
 all retriable writes eventually accept an idempotency key is not yet a public
 Core v1 guarantee.
+
+### Journal creation recovery
+
+`POST /api/notes` and MCP `record_note` accept an optional `request_id`:
+1–128 ASCII characters, starting with a letter/digit and containing only
+letters, digits, `.`, `_`, `:`, or `-`. Generate a fresh unpredictable key for
+each intended creation and persist it with the exact payload **before** sending.
+The identity is `(database, project_id, record_note, request_id)`, not content
+alone; explicitly pin the project. This covers a single note/log/directive,
+not document splitting or a general `Idempotency-Key` header.
+
+The same key and validated intent return the **original creation snapshot**.
+The REST response remains `201` with the existing `JournalEntry` shape on
+both first write and replay; MCP says `Acknowledged` for keyed writes. No
+second journal, link, supersession update, event, audit, hook dispatch or
+embedding job is produced by a committed retry. Different intent under that
+key returns `409`. Validation failures and rolled-back transactions reserve
+no key. Independent connections serialize the key check and creation through
+the existing database write transaction.
+
+Recover an uncertain result with
+`GET /api/notes/write-receipts/{request_id}` or
+`rka_query(args={"operation":"note_write_receipt", "project_id":"prj_...",
+"request_id":"note-recovery-1"})`. The immutable receipt contains the project,
+request and journal IDs, creation time, declared execution actor,
+`hash_version`, `request_hash`, `content_sha256`, `verbatim_input_sha256`, and
+the initial `entry`. Null original text has a null hash; empty text hashes
+as empty UTF-8. Text whitespace, line endings and Unicode are not rewritten.
+
+`journal-create-v1` hashes the UTF-8 encoding of sorted-key, compact JSON
+(`ensure_ascii=False`, separators `,` and `:`) with this envelope:
+`{"version":"journal-create-v1", "project_id":..., "actor":...,
+"payload":...}`. Payload is the validated `JournalEntryCreate` with all
+defaults and without `request_id`; legacy type aliases and raw-capture
+originals are normalized before hashing. Arrays retain their order and
+explicit null differs from an empty array. Actor is the validated execution
+actor (source by default); `actor_basis=caller_asserted` is not authentication.
+Body and original hashes separately use their exact UTF-8 bytes. The contract
+does not claim equivalent requests based merely on similar prose.
+
+After a timeout, read the receipt and compare its project, text/hashes, original
+and intended relationships. Only then may a client mark its own item synced.
+Read the returned journal ID separately for **current** content, attribution,
+lifecycle and enrichment status: the snapshot intentionally does not follow
+edits, corrections, retractions, supersession, or completed embedding jobs.
+A receipt proves a committed write, not successful vector indexing or that a
+research finding is true. `404` means no visible committed receipt in this
+project, not proof that another request is not still in flight. Reuse the
+same key and unchanged payload when retrying; do not create a new key merely
+because a response was lost.
+
+Receipts survive process restarts and are kept with the database, not exported
+or imported in knowledge packs. Packs can remap IDs/content and therefore do
+not transfer retry identity. Back up the database to preserve this ledger;
+restoring an older backup also restores its earlier receipt horizon. Do not
+blindly replay an old client queue into a restored, cloned or different store.
+Deleting a single journal does not remove its receipt or free its key: the
+initial body and original remain in that historical acknowledgement, and
+replay never recreates the deleted entity. Explicit project deletion removes
+that project's receipts through the existing deletion-authorization path.
+There is no new purge endpoint or automatic retention cleanup.
+
+Older backends reject the new field; clients must not strip the key and retry
+as an unkeyed create. Discover support in the input schema / operation index,
+or report the rejection and reconcile manually. Migration 061 is additive and
+does not fabricate receipts for earlier writes. A local client outbox and
+repairing real pending records are separate, explicitly authorized workflows.
 
 ## Read diagnostics and pagination
 

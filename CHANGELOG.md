@@ -5,6 +5,19 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+
+- Single journal/note/directive creation accepts an optional project-scoped
+  `request_id` through REST and MCP. Matching retries return the original
+  creation snapshot; different intent returns 409 without another write.
+  `GET /api/notes/write-receipts/{request_id}` and MCP `note_write_receipt`
+  expose a durable acknowledgement with entity ID and exact-text hashes.
+  Migration 061 stores receipts atomically with the journal aggregate, without
+  backfilling historical entries. Receipts are database-local, excluded from
+  knowledge packs, and removed by explicit project deletion. Unkeyed clients
+  retain existing behavior. No client outbox, production backfill, or
+  deployment is included. See [creation recovery](docs/PUBLIC_CONTRACT.md#journal-creation-recovery).
+
 ### Fixed
 
 - MCP status, search and context consistently surface partial/unavailable or

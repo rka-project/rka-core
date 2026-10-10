@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 # v2.0 canonical types
 JournalType = Literal["note", "log", "directive"]
 JournalCaptureMode = Literal["unknown", "raw_capture", "agent_restatement"]
+JournalRequestId = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")]
 
 
 def validate_capture(mode: JournalCaptureMode, source: str, original: str | None) -> None:
@@ -73,6 +74,12 @@ class JournalEntryCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    request_id: JournalRequestId | None = Field(
+        default=None,
+        description="Optional project-scoped creation key. Reuse it with the same validated "
+        "payload to replay the original result; different intent returns 409. "
+        "Omission preserves non-idempotent creation. Receipts are local to this database.",
+    )
     content: str
     type: AnyJournalType = "note"
     summary: str | None = None
@@ -176,6 +183,23 @@ class JournalEntry(BaseModel):
     enrichment_status: Literal["pending", "ready", "failed"] = "ready"
     created_at: str | None = None
     updated_at: str | None = None
+
+
+class JournalWriteReceipt(BaseModel):
+    """Immutable creation acknowledgement, not the current state of the note."""
+
+    project_id: str
+    request_id: JournalRequestId
+    operation: Literal["record_note"] = "record_note"
+    journal_id: str
+    hash_version: Literal["journal-create-v1"] = "journal-create-v1"
+    request_hash: str
+    content_sha256: str
+    verbatim_input_sha256: str | None
+    actor: str
+    actor_basis: Literal["caller_asserted"] = "caller_asserted"
+    created_at: str
+    entry: JournalEntry
 
 
 class JournalAttributionCorrection(BaseModel):

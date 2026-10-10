@@ -369,11 +369,11 @@
   "operation_counts": {
     "core_maturity": {
       "preview": 22,
-      "stable": 88
+      "stable": 89
     },
     "ownership": {
       "agentic-unsupported": 5,
-      "core": 110,
+      "core": 111,
       "core-legacy": 1,
       "writer-compatibility": 43
     }
@@ -2706,6 +2706,32 @@
       },
       "tool": "rka_query"
     },
+    "note_write_receipt": {
+      "category": "journal",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "const": "note_write_receipt",
+            "default": "note_write_receipt",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "tool": "rka_query"
+    },
     "orphan_supersedes": {
       "category": "decision",
       "input_schema": {
@@ -3399,6 +3425,18 @@
             "anyOf": [
               {
                 "$ref": "#/$defs/_NoteProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
               },
               {
                 "type": "null"
@@ -7425,6 +7463,18 @@
                 ],
                 "default": null
               },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
               "source": {
                 "default": "executor",
                 "enum": [
@@ -10667,6 +10717,28 @@
             ],
             "type": "object"
           },
+          "QueryNoteWriteReceiptArgs": {
+            "additionalProperties": false,
+            "properties": {
+              "operation": {
+                "const": "note_write_receipt",
+                "default": "note_write_receipt",
+                "type": "string"
+              },
+              "project_id": {
+                "type": "string"
+              },
+              "request_id": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "project_id",
+              "request_id"
+            ],
+            "type": "object"
+          },
           "QueryPendingMaintenanceArgs": {
             "additionalProperties": false,
             "properties": {
@@ -11117,6 +11189,7 @@
                 "mission_guard": "#/$defs/QueryMissionGuardArgs",
                 "multi_hop": "#/$defs/QueryMultiHopArgs",
                 "note_attribution_history": "#/$defs/QueryNoteAttributionHistoryArgs",
+                "note_write_receipt": "#/$defs/QueryNoteWriteReceiptArgs",
                 "orphan_supersedes": "#/$defs/OrphanSupersedesArgs",
                 "pending_maintenance": "#/$defs/QueryPendingMaintenanceArgs",
                 "provenance": "#/$defs/QueryProvenanceArgs",
@@ -11148,6 +11221,9 @@
               },
               {
                 "$ref": "#/$defs/QueryJournalArgs"
+              },
+              {
+                "$ref": "#/$defs/QueryNoteWriteReceiptArgs"
               },
               {
                 "$ref": "#/$defs/QueryNoteAttributionHistoryArgs"

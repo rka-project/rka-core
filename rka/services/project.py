@@ -240,6 +240,7 @@ class ProjectService(BaseService):
     )
 
     _DELETE_TABLES = (
+        "journal_write_receipts",
         # Native manuscript and immutable validation histories.
         "manuscript_source_events",
         "manuscript_source_proposals",

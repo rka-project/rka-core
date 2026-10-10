@@ -210,6 +210,9 @@ _TABLE_CATEGORIES: dict[str, list[str]] = {
         "runtime_schema_upgrades",
         "change_events",
         "jobs",
+        # Operational retry keys are local to one database/project identity;
+        # never clone them into packs whose IDs and content may be remapped.
+        "journal_write_receipts",
         "manuscript_migration_issues",
         "reference_validation_migration_issues",
         "manuscript_source_proposals",

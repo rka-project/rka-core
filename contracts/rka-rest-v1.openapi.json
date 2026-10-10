@@ -4013,6 +4013,17 @@
               }
             ]
           },
+          "request_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "source": {
             "default": "executor",
             "enum": [
@@ -4291,6 +4302,72 @@
             "deprecated": true
           }
         },
+        "type": "object"
+      },
+      "JournalWriteReceipt": {
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "actor_basis": {
+            "const": "caller_asserted",
+            "default": "caller_asserted",
+            "type": "string"
+          },
+          "content_sha256": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/JournalEntry"
+          },
+          "hash_version": {
+            "const": "journal-create-v1",
+            "default": "journal-create-v1",
+            "type": "string"
+          },
+          "journal_id": {
+            "type": "string"
+          },
+          "operation": {
+            "const": "record_note",
+            "default": "record_note",
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "request_hash": {
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+            "type": "string"
+          },
+          "verbatim_input_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "project_id",
+          "request_id",
+          "journal_id",
+          "request_hash",
+          "content_sha256",
+          "verbatim_input_sha256",
+          "actor",
+          "created_at",
+          "entry"
+        ],
         "type": "object"
       },
       "LinkZoteroRequest": {
@@ -15684,6 +15761,77 @@
         ]
       }
     },
+    "/api/notes/write-receipts/{request_id}": {
+      "get": {
+        "operationId": "get_note_write_receipt_api_notes_write_receipts__request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-RKA-Project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalWriteReceipt"
+                }
+              }
+            },
+            "description": "Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Response"
+          }
+        },
+        "tags": [
+          "notes"
+        ]
+      }
+    },
     "/api/notes/{directive_id}/dependencies": {
       "get": {
         "operationId": "list_directive_dependencies_api_notes__directive_id__dependencies_get",
@@ -19190,11 +19338,11 @@
   "x-rka-operation-counts": {
     "core_maturity": {
       "preview": 28,
-      "stable": 143
+      "stable": 144
     },
     "ownership": {
       "agentic-unsupported": 10,
-      "core": 171,
+      "core": 172,
       "core-legacy": 6,
       "writer-compatibility": 53
     }

@@ -9,10 +9,10 @@ from rka.services.lifecycle import DirectiveDependencyService
 
 from rka.models.journal import (
     JournalAttributionCorrection, JournalAttributionRevision,
-    JournalEntry, JournalEntryCreate, JournalEntryUpdate,
+    JournalEntry, JournalEntryCreate, JournalEntryUpdate, JournalRequestId, JournalWriteReceipt,
 )
 from rka.services.notes import (
-    JournalAttributionConflict, JournalAttributionError, NoteNotFoundError, NoteService,
+    JournalAttributionConflict, JournalAttributionError, JournalWriteConflict, NoteNotFoundError, NoteService,
 )
 from rka.api.deps import get_scoped_note_service
 
@@ -48,7 +48,21 @@ async def create_note(
     data: JournalEntryCreate,
     svc: NoteService = Depends(get_scoped_note_service),
 ):
-    return await svc.create(data)
+    try:
+        return await svc.create(data)
+    except JournalWriteConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/notes/write-receipts/{request_id}", response_model=JournalWriteReceipt)
+async def get_note_write_receipt(
+    request_id: JournalRequestId,
+    svc: NoteService = Depends(get_scoped_note_service),
+):
+    receipt = await svc.write_receipt(request_id)
+    if receipt is None:
+        raise HTTPException(404, "No committed note write receipt found in this project")
+    return receipt
 
 
 @router.get("/notes", response_model=list[JournalEntry])
