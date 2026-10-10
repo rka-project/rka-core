@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from rka.api.deps import get_db, require_project
 from rka.infra.database import Database
@@ -20,10 +20,12 @@ def _get_maintenance_service(
 
 @router.get("/maintenance")
 async def get_pending_maintenance(
+    limit: int = Query(50, ge=1, le=200, description="Maximum issue occurrences per category"),
+    offset: int = Query(0, ge=0, description="Offset within each category"),
     svc: MaintenanceService = Depends(_get_maintenance_service),
 ):
     """Return a maintenance manifest of all detected gaps in the knowledge base."""
-    return await svc.get_pending_maintenance()
+    return await svc.get_pending_maintenance(limit=limit, offset=offset)
 
 
 @router.get("/maintenance/summary")

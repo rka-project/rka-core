@@ -843,6 +843,7 @@
           "limit": {
             "anyOf": [
               {
+                "maximum": 200,
                 "type": "integer"
               },
               {
@@ -2346,6 +2347,7 @@
           "limit": {
             "anyOf": [
               {
+                "maximum": 200,
                 "type": "integer"
               },
               {
@@ -2730,6 +2732,24 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "limit": {
+            "anyOf": [
+              {
+                "maximum": 200,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "offset": {
+            "default": 0,
+            "minimum": 0,
+            "type": "integer"
+          },
           "operation": {
             "const": "pending_maintenance",
             "default": "pending_maintenance",
@@ -9893,6 +9913,7 @@
               "limit": {
                 "anyOf": [
                   {
+                    "maximum": 200,
                     "type": "integer"
                   },
                   {
@@ -10447,6 +10468,7 @@
               "limit": {
                 "anyOf": [
                   {
+                    "maximum": 200,
                     "type": "integer"
                   },
                   {
@@ -10648,6 +10670,24 @@
           "QueryPendingMaintenanceArgs": {
             "additionalProperties": false,
             "properties": {
+              "limit": {
+                "anyOf": [
+                  {
+                    "maximum": 200,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "offset": {
+                "default": 0,
+                "minimum": 0,
+                "type": "integer"
+              },
               "operation": {
                 "const": "pending_maintenance",
                 "default": "pending_maintenance",

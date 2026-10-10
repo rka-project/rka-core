@@ -84,6 +84,52 @@ These rules describe the current implementation. The architectural goal that
 all retriable writes eventually accept an idempotency key is not yet a public
 Core v1 guarantee.
 
+## Read diagnostics and pagination
+
+`GET /api/maintenance` and `pending_maintenance` accept `limit` (1–200,
+default 50) and `offset` (non-negative, default 0). Pagination applies
+independently to each category, with deterministic ordering for an unchanged
+database. Re-read from offset 0 if records change while paging; this is not a
+snapshot cursor and should not be used while automatically repairing rows.
+
+- `total_items` counts **issue occurrences**, not unique entities, and uses
+  the same count source as `/api/maintenance/summary` regardless of page size.
+- Each category retains `count` as its total and adds `category_total`,
+  `returned_count`, `limit`, `offset`, `has_more`, and `next_offset`.
+  Lifecycle dependency occurrences are directive/decision pairs; `ids` is
+  deduplicated within their page and `candidates` retains every pair.
+- Existing advisory selection limits remain explicit: gate review selects at
+  most 10 missions; lifecycle review selects at most 100 dependency pairs.
+  These are policy-bounded advisory totals, not exhaustive audits. The ordinary
+  SQL categories use full counts. `advisory_limits` documents the distinction.
+- The manifest and summary label `scope=project` and the requested project ID.
+  Estimated tool calls refer to the counted backlog, not the page. An item is
+  a review suggestion, not proof that a claim is missing or authority to
+  manufacture claims, edit attribution, or delete content.
+
+For older backends, MCP retains the default legacy read and warns that totals
+may be capped. A non-default page without response pagination metadata is
+reported as unsupported rather than silently returning the wrong page.
+
+Integrity findings carry `scope=project` with their project ID, or
+`scope=database` for database-wide index/stranded-entity checks. The latter
+retain their existing diagnostic sampling and mark `count_is_exact=false`
+(except the count of unreadable index tables). These findings do not assert
+that content belongs to the requested project, nor authorize recovery/purge.
+
+MCP status/search/context distinguish embedding availability from index
+coverage, consuming optional `index_status`/`warning` capability fields when
+the backend supplies them. Discovery failure means **unknown**, not FTS-only.
+Backends without index metadata do not confirm complete coverage; this change
+does not add or migrate the partial-index storage implementation.
+
+Journal/changelog typed input schemas and discovery expose the REST limit
+maximum of 200; the existing default/null and lower-bound behavior is retained.
+An over-limit request fails earlier, before HTTP, rather than reaching REST's
+existing 422 response. Journal listings mark bodies longer than 500 characters
+as truncated and identify the project-scoped `entity` read. A full changelog
+page does not establish completeness; use `changes_since` for cursor paging.
+
 ## Reviewing and updating snapshots
 
 Run the read-only check locally with:

@@ -3935,6 +3935,9 @@ class KnowledgePackService(BaseService):
                 }
             )
 
+        for issue in issues:
+            issue["scope"] = "project"
+            issue["project_id"] = pid
         issues.extend(await self._index_integrity_issues(pid))
 
         return issues
@@ -4107,6 +4110,11 @@ class KnowledgePackService(BaseService):
                 ),
             })
 
+        for issue in issues:
+            issue["scope"] = "database"
+            # The checks sample at most 50 rows per source; keep the existing
+            # bounded diagnostics but never label them as exhaustive totals.
+            issue["count_is_exact"] = issue["category"] == "index_check_incomplete"
         return issues
 
     @staticmethod

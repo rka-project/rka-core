@@ -7,6 +7,20 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- MCP status, search and context consistently surface partial/unavailable or
+  unknown embedding-index coverage, including empty search results. Older
+  backends without index metadata remain readable but do not imply a ready
+  index. No provider configuration or index data is changed.
+- Maintenance manifests use the same count source as the status summary,
+  separating total issue occurrences from returned page counts. Per-category
+  pagination is available through REST/MCP (`limit` 1–200, `offset` >= 0),
+  with deterministic ordering, explicit existing advisory caps, and complete
+  page ID output. Lifecycle dependency pairs are not collapsed to unique
+  directive counts. See [read diagnostics](docs/PUBLIC_CONTRACT.md#read-diagnostics-and-pagination).
+- Integrity findings distinguish project checks from database-wide bounded
+  index/orphan diagnostics. Journal listings mark truncated content with a
+  scoped full-record lookup; discovery and typed journal/changelog inputs
+  expose REST's existing maximum limit of 200.
 - Offline embedding inspect/dry-run/rebuild/resume/rollback share runtime's
   backend-specific resource validation. Valid HTTP 16 KiB budgets no longer
   fail the old generic 8 KiB validator; FastEmbed limits remain unchanged.

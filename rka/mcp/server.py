@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from rka.mcp.local_transport import LocalOnlyFastMCP
+from rka.mcp.embedding_status import embedding_summary, embedding_warning
 from pydantic import Field
 import httpx
 
@@ -2449,13 +2450,13 @@ async def rka_search(
         # Affordance C (Mission B): degraded-mode one-liner when embeddings
         # are unavailable so the search-result consumer knows the current
         # output is FTS-only (no semantic recall). Best-effort.
-        degraded_line = ""
+        degraded_line = "\n\n" + embedding_warning({})
         try:
-            cap_r = await c.get("/api/capabilities")
+            cap_r = await c.get("/api/capabilities", timeout=2.0)
             if cap_r.status_code == 200:
                 caps = cap_r.json()
-                if not caps.get("embedding", {}).get("available"):
-                    degraded_line = "\n\n⚠ FTS-only — embeddings unavailable; semantic recall is degraded."
+                warning = embedding_warning(caps.get("embedding") or {})
+                degraded_line = "\n\n" + warning if warning else ""
         except Exception:
             pass
 
@@ -2661,6 +2662,8 @@ async def rka_get_journal(
         for e in entries:
             pi_marker = " [PI]" if e.get("source") == "pi" else ""
             lines.append(f"{e['id']} [{e['type']}]{pi_marker} ({e['confidence']}) {e['content'][:500]}")
+            if len(e["content"]) > 500:
+                lines.append(f"  [truncated] Full record: entity(id='{e['id']}', project_id='{project_id}')")
         return "\n".join(lines)
 
 
@@ -2840,29 +2843,37 @@ async def rka_get_status(*, project_id: str) -> str:
             top_str = ", ".join(f"{c['name']} {c['count']}" for c in top)
             lines.append(f"\nMaintenance: {backlog['total_items']} items (top: {top_str})")
 
-        # Affordance C (Mission B): capabilities block. Best-effort —
-        # silently omit on error so a missing /capabilities route doesn't
-        # break status display.
+        # Best-effort discovery: an old/missing endpoint must not prevent
+        # status reads, but must not imply complete semantic coverage either.
         #
         # Mission D (v2.4.0) removed the `llm` field from
         # /api/capabilities per the LLM-capability-removal directive
         # (jrn_01KRNZBS50K250HHHHEC58E4GC). The llm line is rendered
         # conditionally so a future re-introduction works without code
         # changes here.
+        caps = {}
         try:
-            cap_r = await c.get("/api/capabilities")
+            cap_r = await c.get("/api/capabilities", timeout=2.0)
             if cap_r.status_code == 200:
-                caps = cap_r.json()
-                emb = caps.get("embedding", {})
-                lines.append("\n### Capabilities")
-                emb_status = "✓ available" if emb.get("available") else f"✗ unavailable ({emb.get('reason_unavailable') or 'unknown'})"
-                lines.append(f"  embedding: {emb_status}")
-                if "llm" in caps:
-                    llm = caps["llm"] or {}
-                    llm_status = "✓ available" if llm.get("available") else f"✗ unavailable ({llm.get('reason_unavailable') or 'unknown'})"
-                    lines.append(f"  llm:       {llm_status}")
+                payload = cap_r.json()
+                if isinstance(payload, dict):
+                    caps = payload
         except Exception:
             pass
+        emb = caps.get("embedding") or {}
+        if not isinstance(emb, dict):
+            emb = {}
+        lines.append("\n### Capabilities")
+        lines.append(f"  {embedding_summary(emb)}")
+        warning = embedding_warning(emb)
+        if warning:
+            lines.append(f"  {warning}")
+        if "llm" in caps:
+            llm = caps["llm"] or {}
+            if not isinstance(llm, dict):
+                llm = {}
+            llm_status = "✓ available" if llm.get("available") else f"✗ unavailable ({llm.get('reason_unavailable') or 'unknown'})"
+            lines.append(f"  llm:       {llm_status}")
 
         return "\n".join(lines)
 
@@ -3191,6 +3202,17 @@ async def rka_get_context(
         if pkg.get("sources"):
             lines.append(f"\n---\nSources: {', '.join(pkg['sources'][:10])}")
 
+        # Context with a topic can use semantic retrieval. Use the same
+        # public capability warning as search, without probing the provider.
+        warning = embedding_warning({})
+        try:
+            cap_r = await c.get("/api/capabilities", timeout=2.0)
+            if cap_r.status_code == 200:
+                warning = embedding_warning(cap_r.json().get("embedding") or {})
+        except Exception:
+            pass
+        if warning:
+            lines.append(f"\n{warning}")
         return "\n".join(lines)
 
 
@@ -6627,6 +6649,12 @@ async def rka_check_integrity(*, project_id: str) -> str:
     lines = [f"## Integrity Check: {total} issues found\n"]
     for issue in data.get("issues", []):
         lines.append(f"### {issue['description']} ({issue['count']})")
+        scope = issue.get("scope", "unknown")
+        lines.append(f"  Scope: {scope}")
+        if scope == "database":
+            lines.append("  Database-wide finding; not attributed to the requested project.")
+        if issue.get("count_is_exact") is False:
+            lines.append("  Count is a bounded diagnostic sample, not an exhaustive database total.")
         shown = issue.get("ids", [])[:10]
         if shown:
             lines.append(f"  IDs: {', '.join(shown)}")
@@ -6860,7 +6888,7 @@ async def rka_detect_contradictions(
 
 
 @tool(tier="always_on", category="maintenance")
-async def rka_get_pending_maintenance(*, project_id: str) -> str:
+async def rka_get_pending_maintenance(*, project_id: str, limit: int = 50, offset: int = 0) -> str:
     """Detect knowledge base gaps that need attention. Pure SQL — no LLM needed.
 
     Returns a compact manifest of:
@@ -6877,28 +6905,43 @@ async def rka_get_pending_maintenance(*, project_id: str) -> str:
     Use at session start to identify maintenance work before proceeding.
     """
     async with _client(project_id) as c:
-        r = await c.get("/api/maintenance")
+        r = await c.get("/api/maintenance", params={"limit": limit, "offset": offset})
         _raise_with_detail(r)
         data = r.json()
 
     total = data["total_items"]
     est = data["estimated_tool_calls"]
 
+    if "returned_count" not in data and (offset != 0 or limit != 50):
+        return (
+            "Maintenance pagination is unsupported by this backend; the requested page "
+            "was not confirmed. Upgrade the backend, or retry with limit=50, offset=0 "
+            "for its legacy bounded manifest."
+        )
     if total == 0:
         return "Knowledge base is clean — no pending maintenance items."
 
     lines = [f"## Pending Maintenance: {total} items (~{est} tool calls to fix)\n"]
+    lines.append(f"Scope: project {project_id}; counts are issue occurrences, not unique entities.")
+    if "returned_count" in data:
+        lines.append(f"Returned: {data['returned_count']} issues; per-category limit={limit}, offset={offset}.")
+    else:
+        lines.append("Legacy backend: counts may be list-capped; pagination and full totals are unconfirmed.")
+    if data.get("advisory_limits"):
+        lines.append(f"Advisory selection caps (not exhaustive): {data['advisory_limits']}")
     for key, cat in data["categories"].items():
         count = cat["count"]
         if count == 0:
             continue
         lines.append(f"### {cat['description']} ({count})")
         ids = cat["ids"]
-        # Show up to 10 IDs inline, rest as count
-        shown = ids[:10]
-        lines.append(f"  IDs: {', '.join(shown)}")
-        if len(ids) > 10:
-            lines.append(f"  ... and {len(ids) - 10} more")
+        # Return the entire requested page; an undisclosed second display cap
+        # would make its hidden IDs unreachable through next_offset.
+        lines.append(f"  IDs: {', '.join(ids) or '(none on this page)'}")
+        for candidate in cat.get("candidates", []):
+            lines.append(f"  Dependency: {candidate['id']} → {candidate['decision_id']}")
+        if cat.get("has_more"):
+            lines.append(f"  More: pending_maintenance(project_id='{project_id}', limit={limit}, offset={cat['next_offset']})")
         lines.append(f"  Fix: {cat['fix_action']}")
         lines.append("")
 

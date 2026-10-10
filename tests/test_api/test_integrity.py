@@ -76,3 +76,28 @@ async def test_integrity_detects_claim_count_mismatch(api_client: httpx.AsyncCli
     assert r.status_code == 200
     assert "total_issues" in r.json()
     assert "issues" in r.json()
+
+
+@pytest.mark.asyncio
+async def test_maintenance_totals_are_independent_of_page(api_client):
+    for i in range(2):
+        response = await api_client.post("/api/notes", json={"content": f"Synthetic {i}", "type": "note", "source": "executor"})
+        assert response.status_code in (200, 201)
+    summary = (await api_client.get("/api/maintenance/summary")).json()
+    pages = []
+    for offset in (0, 1, 2):
+        response = await api_client.get("/api/maintenance", params={"limit": 1, "offset": offset})
+        assert response.status_code == 200
+        page = response.json()
+        assert page["total_items"] == summary["total_items"] == 6
+        pages.append(page)
+    assert [p["returned_count"] for p in pages] == [3, 3, 0]
+    assert [p["has_more"] for p in pages] == [True, False, False]
+    for category in ("entries_without_tags", "entries_without_claims", "entries_missing_cross_refs"):
+        assert pages[0]["categories"][category]["ids"] != pages[1]["categories"][category]["ids"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("params", [{"limit": 0}, {"limit": 201}, {"offset": -1}])
+async def test_maintenance_rejects_invalid_page(api_client, params):
+    assert (await api_client.get("/api/maintenance", params=params)).status_code == 422

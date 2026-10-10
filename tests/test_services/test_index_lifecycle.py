@@ -130,6 +130,12 @@ class TestIntegrityCanSeeThem:
         found = [i for i in issues if i["category"] == "stranded_entities"]
         assert found, "35 of these exist live and nothing reported them"
         assert "jrn_stranded" in found[0]["ids"]
+        assert found[0]["scope"] == "database"
+        assert "project_id" not in found[0]
+        assert found[0]["count_is_exact"] is False
+        # This diagnostic is not recovery or permission to purge content.
+        row = await db.fetchone("SELECT content, project_id FROM journal WHERE id = 'jrn_stranded'")
+        assert row == {"content": "x", "project_id": "prj_vanished"}
 
     @pytest.mark.asyncio
     async def test_a_clean_database_reports_neither(self, db: Database):

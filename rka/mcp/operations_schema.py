@@ -583,7 +583,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["entity", "search", "record_note"],
-        "notes": None,
+        "notes": "limit: maximum 200 (default 20), matching REST. Listings truncate content at 500 characters and mark truncated entries; use entity for the full record, including end-of-record currency annotations.",
     },
     "literature": {
         "operation": "literature",
@@ -1903,7 +1903,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["pending_maintenance"],
-        "notes": None,
+        "notes": "Project checks include database-wide index/stranded-entity diagnostics, labeled scope=database. Do not attribute those findings to the requested project. Index counts are bounded samples; do not purge stranded research content.",
     },
     "pending_maintenance": {
         "operation": "pending_maintenance",
@@ -1911,9 +1911,9 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
         "category": "maintenance",
         "role_tag": "BRAIN",
         "summary": "Provenance gaps, untagged entries, orphans, etc.",
-        "signature": "rka_query(operation='pending_maintenance', *, project_id)",
+        "signature": "rka_query(operation='pending_maintenance', *, project_id, limit=50, offset=0)",
         "required_fields": ["project_id"],
-        "optional_fields": [],
+        "optional_fields": ["limit", "offset"],
         "enums": {},
         "examples": [
             {
@@ -1925,7 +1925,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["integrity", "freshness", "contradictions"],
-        "notes": None,
+        "notes": "limit: 1–200 (default 50); offset >= 0, applied independently to each category. Counts are issue occurrences, not unique entities. category_total/count is independent of page size; returned_count, has_more and next_offset describe the page. Existing gate (10) and directive-dependency (100 pairs) advisory selection caps remain explicit. Counts do not authorize automatic claim extraction or repair.",
     },
     "changelog": {
         "operation": "changelog",
@@ -1949,8 +1949,8 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
                 },
             },
         ],
-        "related_operations": ["status"],
-        "notes": "`filters.since` is REQUIRED.",
+        "related_operations": ["status", "changes_since"],
+        "notes": "`filters.since` is REQUIRED. limit: maximum 200 (default 50), matching REST. A full page is not proof that all changes were returned; use changes_since for cursor pagination.",
     },
     "bootstrap_review": {
         "operation": "bootstrap_review",
