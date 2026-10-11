@@ -119,6 +119,42 @@ rka_add_note(
 
 **Periodic protocol review**: when significant results arrive or the research direction feels uncertain, search for `tags:research-protocol` in the current project, re-read, and check whether current work still aligns. If assumptions have been invalidated by evidence, flag with a Confirmation Brief rather than silently adapting.
 
+## Evidence-led research workflow (RWF v0)
+
+Templates and shared conventions: `templates/README.md`, `templates/gap-note.md`, `templates/hypothesis-test.md`, `templates/stop-pivot-note.md`. This section is the Brain-side sequence. The Executor side, including recovery of negative history at mission pickup, is `../executor/workflows.md` § "Evidence-led research workflow (RWF v0)".
+
+### Sequence
+
+1. **Explore read-only.** Before drafting anything: `context` on the topic; `search` scoped to `["decision"]` and read each hit's terminal status with `entity`, following `superseded_by`; `search` for `rwf gap note <topic>`, `rwf hypothesis test <topic>` and `rwf stop pivot <topic>` scoped to `["journal"]`; `decision_tree` with `active_only: false` for `abandoned` / `revisit` nodes near the topic. Draft only after this.
+2. **Gap Note.** Fill `templates/gap-note.md`. Save with `record_note`, `confidence="hypothesis"`, tags `rwf-gap-note` and `rwf-v0`, `related_literature` set. Present the bounded statement to the PI with a Confirmation Brief.
+3. **PI confirms the direction.** Record the PI's words with `source="pi"` and `verbatim_input`. Then `record_decision(kind="research_question", related_journal=[gap note])`, and `update_note` on the gap note with `related_decisions` and `confidence="verified"`.
+4. **Hypothesis & Test.** Fill `templates/hypothesis-test.md`. Sections 2 to 6 (hypotheses, scope, controls, observations, criteria) are complete before any run. Save the note; `record_decision(kind="design_choice")` with the hypotheses and scope conditions as `assumptions`; `create_mission` whose `acceptance_criteria` quotes the Support / Refute / Inconclusive text verbatim and whose `context` names the note.
+5. **Executor Backbrief, then execution.** Review the Backbrief against the contract and against the negative history the Executor recovered. Observations arrive as Executor notes with `confidence="tested"` linked to the mission.
+6. **Closeout.** Read the report. Separate what was observed, what it means under the contract, what limits it (scope conditions, uncertainty), and what happens next. If the outcome is Support or Refute, assess `evidence_status` on any extracted claims through `review_claims`; the Executor's notes do not do this. If the outcome is Inconclusive or the work stopped, go to step 7.
+7. **Stop / Pivot Note.** Fill `templates/stop-pivot-note.md` with exactly one `stop_reason`. Record the PI's decision verbatim. Then `update_decision(status="revisit" | "abandoned", abandonment_reason=...)`, or `supersede_decision` for a pivot with the stop note in `related_journal`. Leave the note `active`.
+
+### Mapping to existing entities
+
+| Template | Journal | Decision | Mission |
+|---|---|---|---|
+| Gap Note | `record_note`, tags `rwf-gap-note` `rwf-v0`, `related_literature` | `record_decision(kind="research_question")` after PI confirmation | none |
+| Hypothesis & Test | `record_note`, tags `rwf-hypothesis-test` `rwf-v0` | `record_decision(kind="design_choice", assumptions=[H1.., scope])` | `create_mission(acceptance_criteria=<criteria verbatim>)` |
+| Stop / Pivot Note | `record_note`, tags `rwf-stop-pivot` `rwf-v0` `<category>` | `update_decision(status, abandonment_reason)` or `supersede_decision` | `update_mission_status("partial" \| "cancelled")` and a report |
+
+No new journal type, tag enum, schema, API or service is involved, and none of the preview operations (experiments, claim scope, interpretation staging) is required. If a step appears to need one, raise a checkpoint instead.
+
+### Criteria discipline
+
+A criterion is pre-registered only if it was saved before the data existed. If results suggest a better criterion, write that down as an interpretation in the closeout; if the test is to be rerun, write a new Hypothesis & Test note that `supersedes` the old one, with the reason in its revision log. Never `update_note` the criteria of a note a mission has already run against.
+
+### Stop reason is a category, not a verdict
+
+`counterevidence` needs a pre-registered Refute criterion and the observation that met it. `implementation_failure` and `resource_priority` leave the hypothesis untested. `insufficient_evidence` means the Inconclusive criterion was met or required materials were missing. Only `counterevidence` justifies `status="abandoned"` without a reopen condition; the others normally end as `revisit` with the reopen condition in `abandonment_reason`. Stopping effort never creates a `contradicts` claim edge.
+
+### Retrieval caveat
+
+`journal` with `filters.tags` does not filter at Core 3.0.1; it returns the unfiltered listing. Find RWF notes with `search` (tags are matched segment by segment, so `rwf stop pivot` reaches `rwf-stop-pivot`) and read them in full with `entity`.
+
 ## Interpretation Staging and Claim Promotion
 
 Journal entries are first distilled into reviewable interpretation candidates.
@@ -612,3 +648,4 @@ The CLI command opens the DB, fires `periodic` once per project, then exits. Sch
   funnel, and research-map structure: `architecture.md`.
 - Multi-choice decision UX + Confirmation Brief template: `decision_ux.md`.
 - Worked examples for PI attribution and common mistakes: `examples.md`.
+- RWF v0 templates (Gap Note, Hypothesis & Test, Stop / Pivot Note): `templates/README.md`.

@@ -165,6 +165,53 @@ Find the Confirmation Brief via `rka_search(query="confirmation-brief", filters=
 
 ---
 
+## Evidence-led research workflow (RWF v0)
+
+Templates and shared conventions: `../brain/templates/README.md` and the three template files beside it. Over MCP without a file system: `rka_load_tools(["rka_read_skill"])`, then `rka_read_skill("brain", "templates/stop-pivot-note.md")`. The Brain-side sequence (Gap Note, contract, decisions) is `../brain/workflows.md` § "Evidence-led research workflow (RWF v0)". This section is what the Executor does.
+
+### Recovering negative history at pickup
+
+Run all of these before the Backbrief. Each covers something the others miss.
+
+```python
+rka_query(args={"operation": "mission_guard", "project_id": P, "id": "mis_..."})
+rka_query(args={"operation": "search", "project_id": P,
+                "query": "rwf stop pivot <topic words>",
+                "filters": {"entity_types": ["journal"]}})
+rka_query(args={"operation": "search", "project_id": P,
+                "query": "<topic words>", "filters": {"entity_types": ["decision"]}})
+rka_query(args={"operation": "decision_tree", "project_id": P,
+                "filters": {"active_only": False}})
+```
+
+- `mission_guard` returns retracted or superseded journal entries and unresolved claim contradictions that overlap the mission text. It does not return abandoned or revisited decisions, and its token overlap misses differently worded notes.
+- The journal `search` finds Stop / Pivot Notes by their tags (`rwf-stop-pivot` is matched segment by segment) and by header text. Read each hit in full with `entity`; the listing truncates content.
+- From the decision search and the tree, read every node whose `status` is `abandoned`, `revisit` or `superseded` near the topic with `entity`. For `superseded`, follow `superseded_by` until an `active`, `abandoned`, `merged` or `revisit` decision, with a visited-id guard. A `superseded` decision with no replacement is a gap to report, not a reason to pick the newest decision.
+- `journal` with `filters.tags` does not filter at Core 3.0.1; it returns the unfiltered listing. Use `search` as above.
+
+Put what you found in the Backbrief: which stopped directions overlap the mission, their `stop_reason`, and whether the reopen condition now holds. If the mission would repeat a `counterevidence` stop inside its scope conditions, raise a `decision` checkpoint before starting.
+
+### Executing against a Hypothesis & Test contract
+
+1. Read the contract note named in the mission context. Confirm the mission's `acceptance_criteria` matches its Support / Refute / Inconclusive text; if they differ, raise a `clarification` checkpoint.
+2. Record each run or batch as its own `record_note` with `type="note"`, `source="executor"`, `confidence="tested"`, tags `rwf-hypothesis-test`, `rwf-v0`, `observation`, and `provenance.related_mission` plus `related_decisions`. State setup, conditions, units, uncertainty, repeats, failed runs, and which criterion the run met for which hypothesis.
+3. Do not change the criteria. If the data makes a different criterion look better, say so in the report under interpretation; the Brain decides whether to write a superseding contract.
+4. At closeout the report separates four things: what was observed, what that means under the contract, what limits it, and what should happen next. Support for a hypothesis is not `evidence_status="supported"`; that assessment belongs to the Brain.
+
+### Writing a Stop / Pivot Note as the Executor
+
+You write one when the mission cannot reach a Support or Refute outcome: a dependency, environment, data access or tooling failure (`implementation_failure`), or the Inconclusive criterion was met (`insufficient_evidence`). The Brain or PI writes `resource_priority` and `counterevidence` stops. Fill `../brain/templates/stop-pivot-note.md`; set the mission `partial` or `blocked`, never `complete`; submit a report whose summary names the category; propose the decision's new status in the report rather than changing it yourself.
+
+### Write discipline for every save above
+
+- `record_note` with a stable `request_id`. On timeout, read `note_write_receipt` first; retry with the identical payload only. A receipt proves persistence, not that anyone read the note.
+- `update_decision`, `supersede_decision`, `create_mission`, `update_mission_status` and `submit_report` are not idempotent. Do not retry them blind; read the entity back and decide.
+- A template save is several writes with no transaction around them. If one fails, report which ids exist and which do not; do not describe the set as saved.
+- `confidence="verified"` means sources were checked. Scientific support is `evidence_status`, set by the Brain. Do not conflate them in notes or reports.
+- Preview operations (experiments, claim scope, interpretation staging) are not part of this flow. If one seems necessary, stop and raise a checkpoint rather than loading it.
+
+---
+
 ## Migration Table Registry
 
 When writing a migration that creates a new table with a `project_id` column, you MUST also add it to `_TABLE_CATEGORIES` in `rka/services/knowledge_pack.py`. Choose the correct category:
@@ -202,3 +249,4 @@ After the reinstall, the PI needs to restart Claude Desktop (and you need to res
 - Every-mission discipline (role, session start, Backbrief rule, escalation categories, guardrails): `SKILL.md`.
 - Worked examples (Backbrief, reports, checkpoint timing): `examples.md`.
 - Brain counterpart skill: `../brain/SKILL.md`.
+- RWF v0 templates (Gap Note, Hypothesis & Test, Stop / Pivot Note): `../brain/templates/README.md`.

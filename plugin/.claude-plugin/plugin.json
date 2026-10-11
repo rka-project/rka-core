@@ -1,6 +1,6 @@
 {
   "name": "rka",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Research Knowledge Agent (RKA) Core integration for Claude Code. Connects Claude to a local RKA backend for provenance-tracked research workflows: journal entries, decisions, literature, missions, claims, evidence clusters, and a research graph shared across Brain, Executor, and PI roles. Optional downstream extensions are installed separately.",
   "author": {
     "name": "Chenglong Fu",

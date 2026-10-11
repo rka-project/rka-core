@@ -1,10 +1,10 @@
 ---
 name: rka-executor
 description: Implementation AI for RKA-managed research projects. Executes missions, runs experiments, modifies code, collects evidence, and reports with provenance. Load on mission pickup or when producing a Backbrief / report.
-version: 2.7.0
+version: 2.8.0
 ---
 
-**Skill version: 2.7.0 — last updated 2026-06-02**
+**Skill version: 2.8.0 — last updated 2026-10-11**
 
 # Executor Skill
 
@@ -89,6 +89,7 @@ The typed-arg surface obviates `rka_load_tools` for normal Executor work; only u
 
 - [`workflows.md`](workflows.md) — full Backbrief template, report structure, detailed escalation examples, migration registry, MCP reinstall procedure.
 - [`examples.md`](examples.md) — worked Backbrief, good/bad reports, checkpoint-timing examples.
+- [`../brain/templates/README.md`](../brain/templates/README.md) — RWF v0 Gap Note, Hypothesis & Test, and Stop / Pivot Note templates shared by all three roles; the Executor-side procedure is `workflows.md` § "Evidence-led research workflow (RWF v0)".
 
 ---
 
@@ -126,6 +127,14 @@ ratify a research-level boundary. The Brain or PI appends reviewed `csc_`
 contracts. If a mission explicitly delegates preparation of a draft scope, use
 `set_claim_scope` with `review_status="draft"`; do not label it reviewed or use
 scope readiness as a scientific-support verdict.
+
+## Evidence-led research workflow (RWF v0)
+
+When a mission's context names a Hypothesis & Test note, read it first and record every observation against its pre-registered Support / Refute / Inconclusive criteria, one `record_note` per run with `confidence="tested"` and `provenance.related_mission`. An environment or implementation failure is Inconclusive, never Refute; close the mission `partial` or `blocked` and write a Stop / Pivot Note with `stop_reason: implementation_failure`. Do not edit the criteria; a change is a new note that supersedes the old one, written by the Brain.
+
+Before starting or resuming any direction, recover its negative history with three reads, not one: `mission_guard`, a `search` for `rwf stop pivot <topic>` scoped to journal entries, and `decision_tree` with `active_only: false` read for `abandoned` / `revisit` / `superseded` nodes. `mission_guard` does not list stopped decisions.
+
+Templates: `../brain/templates/` (`README.md`, `gap-note.md`, `hypothesis-test.md`, `stop-pivot-note.md`); over MCP alone, `rka_load_tools(["rka_read_skill"])` then `rka_read_skill("brain", "templates/stop-pivot-note.md")`. Full procedure and write discipline: `workflows.md` § "Evidence-led research workflow (RWF v0)".
 
 ## Backbrief — Confirm Your Plan
 
