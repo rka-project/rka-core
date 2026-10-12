@@ -2652,6 +2652,8 @@ async def rka_get_journal(
     status: str | None = None,
     since: str | None = None,
     limit: int = 20,
+    source: str | None = None,
+    tags: list[str] | None = None,
     *,
     project_id: str,
 ) -> str:
@@ -2666,6 +2668,8 @@ async def rka_get_journal(
         status: draft | active | superseded | retracted
         since: ISO date to filter from
         limit: Max results
+        source: brain | executor | pi | web_ui | llm
+        tags: Only entries carrying every listed tag
     """
     async with _client(project_id) as c:
         params = {"limit": limit, "hide_superseded": True}
@@ -2679,6 +2683,10 @@ async def rka_get_journal(
             params["status"] = status
         if since:
             params["since"] = since
+        if source:
+            params["source"] = source
+        if tags:
+            params["tags"] = list(tags)
         r = await c.get("/api/notes", params=params)
         _raise_with_detail(r)
         entries = r.json()

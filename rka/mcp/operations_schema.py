@@ -583,7 +583,7 @@ OPERATIONS_SCHEMA: dict[str, dict[str, Any]] = {
             },
         ],
         "related_operations": ["entity", "search", "record_note"],
-        "notes": "limit: maximum 200 (default 20), matching REST. Listings truncate content at 500 characters and mark truncated entries; use entity for the full record, including end-of-record currency annotations.",
+        "notes": "limit: maximum 200 (default 20), matching REST. Listings truncate content at 500 characters and mark truncated entries; use entity for the full record, including end-of-record currency annotations. filters.tags is a list and matches only entries carrying every listed tag; filters.source matches the asserted author role.",
     },
     "literature": {
         "operation": "literature",

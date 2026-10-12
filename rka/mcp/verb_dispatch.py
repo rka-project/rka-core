@@ -1122,6 +1122,8 @@ async def dispatch_query(
             confidence=f.get("confidence"),
             status=f.get("status"),
             since=f.get("since"),
+            source=f.get("source"),
+            tags=f.get("tags"),
             limit=limit or f.get("limit", 20),
             project_id=project_id,
         )

@@ -37,6 +37,13 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- The MCP `journal` operation's advertised `filters.tags` and `filters.source`
+  are now applied. `GET /api/notes` gains a repeatable `tags` query parameter
+  (every listed tag must be present; project-scoped); the legacy
+  `rka_get_journal` tool and the typed `journal` dispatch forward both filters
+  instead of dropping them. Through Core 3.0.1 these filters were accepted by
+  the schema and ignored, returning the unfiltered listing (#170). Contract
+  snapshots are regenerated for the new parameter; no schema change.
 - MCP status, search and context consistently surface partial/unavailable or
   unknown embedding-index coverage, including empty search results. Older
   backends without index metadata remain readable but do not imply a ready
