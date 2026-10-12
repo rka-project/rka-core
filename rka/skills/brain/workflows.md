@@ -153,7 +153,7 @@ A criterion is pre-registered only if it was saved before the data existed. If r
 
 ### Retrieval caveat
 
-`journal` with `filters.tags` does not filter at Core 3.0.1; it returns the unfiltered listing. Find RWF notes with `search` (tags are matched segment by segment, so `rwf stop pivot` reaches `rwf-stop-pivot`) and read them in full with `entity`.
+`journal` with `filters.tags` does not filter through Core 3.0.1 (rka-project/rka-core#170 tracks the fix); it returns the unfiltered listing. Find RWF notes with `search` (tags are matched segment by segment, so `rwf stop pivot` reaches `rwf-stop-pivot`) and read them in full with `entity`.
 
 ## Interpretation Staging and Claim Promotion
 

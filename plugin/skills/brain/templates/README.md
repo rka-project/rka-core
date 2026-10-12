@@ -52,8 +52,9 @@ Write both tags on every saved note: the kind tag (`rwf-gap-note`,
 `rwf-hypothesis-test`, `rwf-stop-pivot`) and the set tag `rwf-v0`. Tags are
 matched by `search` token by token on hyphen-delimited segments, so the query
 `rwf stop pivot` scoped to journal entries surfaces every Stop / Pivot Note.
-Do not rely on `journal` `filters.tags` for this; at Core 3.0.1 that filter is
-not applied (see the retrieval notes in `executor/workflows.md`).
+Do not rely on `journal` `filters.tags` for this; through Core 3.0.1 that
+filter is not applied (rka-project/rka-core#170 tracks the fix). `search`
+works on every version; see the retrieval notes in `executor/workflows.md`.
 
 ## Evidence-status boundary
 

@@ -187,7 +187,7 @@ rka_query(args={"operation": "decision_tree", "project_id": P,
 - `mission_guard` returns retracted or superseded journal entries and unresolved claim contradictions that overlap the mission text. It does not return abandoned or revisited decisions, and its token overlap misses differently worded notes.
 - The journal `search` finds Stop / Pivot Notes by their tags (`rwf-stop-pivot` is matched segment by segment) and by header text. Read each hit in full with `entity`; the listing truncates content.
 - From the decision search and the tree, read every node whose `status` is `abandoned`, `revisit` or `superseded` near the topic with `entity`. For `superseded`, follow `superseded_by` until an `active`, `abandoned`, `merged` or `revisit` decision, with a visited-id guard. A `superseded` decision with no replacement is a gap to report, not a reason to pick the newest decision.
-- `journal` with `filters.tags` does not filter at Core 3.0.1; it returns the unfiltered listing. Use `search` as above.
+- `journal` with `filters.tags` does not filter through Core 3.0.1 (rka-project/rka-core#170 tracks the fix); it returns the unfiltered listing. Use `search` as above, which works on every version.
 
 Put what you found in the Backbrief: which stopped directions overlap the mission, their `stop_reason`, and whether the reopen condition now holds. If the mission would repeat a `counterevidence` stop inside its scope conditions, raise a `decision` checkpoint before starting.
 
