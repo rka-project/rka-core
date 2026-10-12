@@ -10,6 +10,13 @@ export function embeddingStatus(data: CoreCapabilities | undefined, isError: boo
     } as const
   }
   if (data.embedding?.available === true && data.embedding.search_mode === "hybrid") {
+    if (data.embedding.index_status === "partial") {
+      return {
+        mode: "hybrid",
+        label: "Partial semantic + keyword search",
+        description: "Verified vectors are searchable. Records without vectors remain keyword-searchable; embedding backfill still needs attention.",
+      } as const
+    }
     return {
       mode: "hybrid",
       label: "Semantic + keyword search",

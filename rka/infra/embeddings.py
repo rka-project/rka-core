@@ -205,6 +205,17 @@ class EmbeddingService:
         """Hash content to detect changes for re-embedding."""
         return embedding_content_hash(content)
 
+    async def index_search_status(self) -> str:
+        """Distinguish verified partial coverage from complete readiness."""
+        if self.db is None:
+            return "ready"
+        from rka.services.embedding_index import embedding_index_search_status
+
+        return await embedding_index_search_status(
+            self.db, generation=self.index_generation,
+            space_signature=self.space_signature, dim=self.dim,
+        )
+
     async def needs_reembed(
         self,
         entity_type: str,

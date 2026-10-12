@@ -170,6 +170,8 @@ async def test_capabilities_tracks_runtime_and_generation_degradation(
         "available": True,
         "reason_unavailable": None,
         "search_mode": "hybrid",
+        "index_status": None,
+        "warning": None,
     }
     assert "embedding" in recovered["available_capabilities"]
 
@@ -188,6 +190,29 @@ async def test_supported_contract_and_capability_requirements_succeed(
     )
     assert r.status_code == 200
     assert r.json()["available_capabilities"] == ["rest", "mcp"]
+
+
+async def test_partial_coverage_has_warning_and_never_claims_backfill_completion(api_client):
+    class PartialEmbeddings:
+        runtime_available = True
+
+        async def index_search_status(self):
+            return "partial"
+
+    app = api_client._transport.app
+    app.state.embeddings = PartialEmbeddings()
+    response = await api_client.get("/api/capabilities", params={"required_capability": "embedding"})
+    assert response.status_code == 200
+    embedding = response.json()["embedding"]
+    assert embedding["available"] and embedding["search_mode"] == "hybrid"
+    assert embedding["index_status"] == "partial"
+    assert embedding["reason_unavailable"] is None
+    assert "Partial semantic coverage" in embedding["warning"]
+    assert "keyword-searchable" in embedding["warning"]
+    app.state.embeddings.runtime_available = False
+    failed = (await api_client.get("/api/capabilities")).json()["embedding"]
+    assert failed["available"] is False and failed["search_mode"] == "lexical"
+    assert failed["index_status"] == "partial"
 
 
 @pytest.mark.asyncio

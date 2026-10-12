@@ -13,6 +13,8 @@ class EmbeddingCapability(BaseModel):
     available: bool
     reason_unavailable: str | None = None
     search_mode: Literal["hybrid", "lexical"] = "lexical"
+    index_status: Literal["ready", "partial", "reindexing", "failed", "unavailable"] | None = None
+    warning: str | None = None
 
 
 class CoreContractIdentity(BaseModel):

@@ -75,7 +75,8 @@ def _operation_counts() -> dict[str, int]:
 
 
 def build_core_capabilities(
-    *, embedding_available: bool, embedding_reason: str | None
+    *, embedding_available: bool, embedding_reason: str | None,
+    embedding_index_status: str | None = None,
 ) -> CoreCapabilities:
     """Build the versioned discovery document without touching storage."""
 
@@ -84,6 +85,12 @@ def build_core_capabilities(
         available=embedding_available,
         reason_unavailable=embedding_reason,
         search_mode="hybrid" if embedding_available else "lexical",
+        index_status=embedding_index_status,
+        warning=(
+            "Partial semantic coverage: only verified current vectors are searchable; "
+            "records without vectors remain keyword-searchable. Backfill still needs attention."
+            if embedding_index_status == "partial" else None
+        ),
     )
     available = ["rest", "mcp"]
     if embedding.available:

@@ -83,6 +83,9 @@ records or rewrite long source text. There is deliberately no online force flag.
 5. Restart API and worker. The worker performs/resumes the durable backfill.
    `prepared`/`queued` is **not** a ready-index result; check the generation/job
    status. Failed or oversized rows remain explicit and lexical search survives.
+   A verified `partial` generation exposes only its coherent current vectors;
+   the failed backfill and missing coverage remain explicit, not `healthy` or
+   `ready`. See [partial coverage and upgrade safety](embedding_backends.md#upgrade-backfill-oom--issue-158).
 
 macOS/Linux:
 

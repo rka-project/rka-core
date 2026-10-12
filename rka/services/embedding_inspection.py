@@ -184,7 +184,7 @@ async def _inspect_snapshot(db, identity, *, max_rows, deadline):
             or type(generation["dimensions"]) is not int or generation["dimensions"] < 1
             or not isinstance(generation["space_signature"], str)
             or not isinstance(generation["model_name"], str)
-            or generation["status"] not in {"ready", "reindexing", "failed"}
+            or generation["status"] not in {"ready", "partial", "reindexing", "failed"}
         ):
             raise EmbeddingInspectionError("generation_record_invalid")
     matching_generation = bool(generation and all(
