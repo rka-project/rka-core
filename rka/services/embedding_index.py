@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -18,6 +20,8 @@ from rka.services.embedding_reshape import (
     current_vec_table_dim,
     reshape_all_vec_tables_if_needed,
 )
+
+logger = logging.getLogger(__name__)
 
 
 _VEC_TABLE_NAMES = (
@@ -406,12 +410,12 @@ async def resume_embedding_transition(
             raise EmbeddingGenerationMismatch(
                 "embedding generation changed; reload the configured backend and retry"
             )
-        if current.status == "failed":
+        if current.status in {"failed", "partial"}:
             await db.execute(
                 """UPDATE embedding_index_state
                    SET status = 'reindexing', last_error = NULL,
                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                   WHERE singleton = 1 AND generation = ? AND status = 'failed'""",
+                   WHERE singleton = 1 AND generation = ? AND status IN ('failed', 'partial')""",
                 [generation],
             )
             current = EmbeddingIndexState(
@@ -443,7 +447,7 @@ async def assert_embedding_generation(
         or current.generation != generation
         or current.space_signature != space_signature
         or current.dimensions != dim
-        or current.status not in {"ready", "reindexing"}
+        or current.status not in {"ready", "partial", "reindexing"}
     ):
         raise EmbeddingGenerationMismatch(
             "embedding generation changed; reload the configured backend and retry"
@@ -457,16 +461,30 @@ async def embedding_index_search_ready(
     space_signature: str,
     dim: int,
 ) -> bool:
+    return (await embedding_index_search_status(
+        db, generation=generation, space_signature=space_signature, dim=dim,
+    )) in {"ready", "partial"}
+
+
+async def embedding_index_search_status(
+    db: Any,
+    *,
+    generation: int | None,
+    space_signature: str,
+    dim: int,
+) -> str:
+    """Read readiness only for the process-bound generation, never a stale peer."""
     current = await get_embedding_index_state(db)
     if current is None:
-        return True
-    return bool(
+        return "ready"  # legacy/test stores without a generation singleton
+    if (
         generation is not None
         and current.generation == generation
         and current.space_signature == space_signature
         and current.dimensions == dim
-        and current.status == "ready"
-    )
+    ):
+        return current.status
+    return "unavailable"
 
 
 async def finish_embedding_transition(
@@ -476,7 +494,11 @@ async def finish_embedding_transition(
     success: bool,
     error: str | None = None,
 ) -> bool:
-    """Finish only the still-current generation; stale jobs are ignored."""
+    """Finish only the still-current generation; stale jobs are ignored.
+
+    Failed work remains failed. A separately verified subset may be searchable,
+    but is never relabelled ready and never clears the backfill error/history.
+    """
 
     status = "ready" if success else "failed"
     async with db.transaction():
@@ -491,6 +513,8 @@ async def finish_embedding_transition(
             success = False
             status = "failed"
             error = "embedding backfill left inconsistent vector metadata"
+        if not success and await _partial_index_is_searchable(db, current):
+            status = "partial"
         await db.execute(
             """UPDATE embedding_index_state
                SET status = ?, last_error = ?,
@@ -499,6 +523,58 @@ async def finish_embedding_transition(
             [status, None if success else (error or "embedding backfill failed"), generation],
         )
     return True
+
+
+async def _partial_index_is_searchable(db: Any, state: EmbeddingIndexState) -> bool:
+    """Fail closed unless every stored pair passes bounded snapshot inspection.
+
+    Called inside the terminal transition's write transaction. Reuses the
+    operator inspection's physical schema, space, pairing and source-hash proof;
+    missing vectors are permitted, stale/orphan/mixed-space pairs are not.
+    This performs no inference, vector deletion, source edit or job retry.
+    """
+    from rka.infra.embedding_documents import DOCUMENT_SPECS
+    from rka.services.embedding_inspection import _inspect_snapshot
+
+    deadline = time.monotonic() + 30
+    try:
+        # The online Database does not inherit readonly_sqlite's 2 MiB cell
+        # limit. Preflight in SQL before the inspector fetches source text.
+        # Bound derived rows too, including orphans not counted as sources.
+        total = 0
+        for spec in DOCUMENT_SPECS.values():
+            count = (await db.fetchone(f"SELECT count(*) AS n FROM {spec.source_table}"))["n"]
+            total += count
+            byte_sum = " + ".join(f"coalesce(length(cast({field} AS BLOB)), 0)" for field in spec.fields)
+            if total > 50000 or time.monotonic() > deadline or await db.fetchone(
+                f"SELECT 1 AS oversized FROM {spec.source_table} WHERE {byte_sum} > ? LIMIT 1",
+                [2 * 1024 * 1024],
+            ):
+                return False
+        for table in ("embedding_metadata", *_VEC_TABLE_NAMES):
+            if (await db.fetchone(f"SELECT count(*) AS n FROM {table}"))["n"] > 50000:
+                return False
+        report = await _inspect_snapshot(db, {
+            "space_signature": state.space_signature,
+            "model_name": state.model_name,
+            "dimensions": state.dimensions,
+            "legacy_adoption_safe": False,
+        }, max_rows=50000, deadline=deadline)
+        totals = report["totals"]
+        return bool(
+            time.monotonic() <= deadline
+            and report["assessment"]["complete"]
+            and report["generation_matches_config"]
+            and report["structural"]["coherent"]
+            and totals["reusable"] > 0
+            and not any(totals[key] for key in (
+                "hash_mismatch", "metadata_wrong_space", "invalid_document", "unaddressable",
+            ))
+        )
+    except Exception as exc:  # noqa: BLE001 -- any incomplete proof must fail closed
+        # No source/config/exception text in diagnostics.
+        logger.warning("Partial embedding index verification failed (%s)", type(exc).__name__)
+        return False
 
 
 async def _active_index_rows_are_consistent(

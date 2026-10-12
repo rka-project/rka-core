@@ -14,7 +14,7 @@ from rka.services.worker import EnrichmentWorker
 
 
 @pytest.mark.asyncio
-async def test_native_poison_backfill_stays_failed_across_api_restarts(tmp_path, monkeypatch):
+async def test_native_poison_job_stays_failed_with_partial_index_across_restarts(tmp_path, monkeypatch):
     # Full-model RSS and historical-schema acceptance remain separate opt-in
     # container gates. This regression must never load/download a real model.
     calls = []
@@ -96,7 +96,7 @@ async def test_native_poison_backfill_stays_failed_across_api_restarts(tmp_path,
             ]
             assert (await db.fetchone("SELECT status FROM embedding_index_state"))[
                 "status"
-            ] == "failed"
+            ] == "partial"
             assert (
                 await db.fetchall("SELECT * FROM embedding_metadata ORDER BY entity_id") == metadata
             )
@@ -115,3 +115,7 @@ async def test_native_poison_backfill_stays_failed_across_api_restarts(tmp_path,
                 transport=httpx.ASGITransport(app=restarted), base_url="http://test"
             ) as client:
                 assert (await client.get("/api/health")).status_code == 200
+                caps = (await client.get("/api/capabilities")).json()["embedding"]
+                assert caps["available"] and caps["search_mode"] == "hybrid"
+                assert caps["index_status"] == "partial"
+                assert "Partial semantic coverage" in caps["warning"]

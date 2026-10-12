@@ -224,9 +224,12 @@ def _assert_migration_state(db_path: Path, *, require_vec: bool) -> None:
             )
         }
 
-    required_migrations = set()
+    required_migrations = {
+        "060_partial_embedding_index.sql",
+        "061_journal_write_receipts.sql",
+    }
     if require_vec:
-        required_migrations = {
+        required_migrations |= {
             "002_add_vec_artifacts.sql",
             "010_v2_vec_claims.sql",
         }

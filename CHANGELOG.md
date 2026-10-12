@@ -37,6 +37,13 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- A terminal backfill failure no longer necessarily disables valid semantic
+  retrieval. Migration 060 adds a distinct `partial` state, admitted only after
+  bounded, transactional space/schema/pairing/source-hash verification. Failed
+  jobs and missing coverage remain explicit in capabilities, UI and MCP search.
+  Original text, valid vectors, limits and model identity are unchanged; no
+  truncation, chunking, automatic retry reset or forced readiness is introduced.
+  See [verification and downgrade requirements](docs/embedding_backends.md#upgrade-backfill-oom--issue-158).
 - The MCP `journal` operation's advertised `filters.tags` and `filters.source`
   are now applied. `GET /api/notes` gains a repeatable `tags` query parameter
   (every listed tag must be present; project-scoped); the legacy

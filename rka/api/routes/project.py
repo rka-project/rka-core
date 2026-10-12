@@ -120,6 +120,11 @@ async def get_capabilities(
     db = getattr(state, "db", None)
 
     embeddings = getattr(state, "embeddings", None)
+    index_status = None
+    if embeddings and getattr(db, "vec_available", False):
+        read_status = getattr(embeddings, "index_search_status", None)
+        if read_status is not None:
+            index_status = await read_status()
     if embeddings and getattr(db, "vec_available", False):
         if getattr(embeddings, "runtime_available", None) is False:
             emb_block = {
@@ -130,7 +135,10 @@ async def get_capabilities(
                 ),
             }
         elif (
-            getattr(embeddings, "index_search_ready", None) is not None
+            index_status is not None and index_status not in {"ready", "partial"}
+        ) or (
+            index_status is None
+            and getattr(embeddings, "index_search_ready", None) is not None
             and not await embeddings.index_search_ready()
         ):
             emb_block = {
@@ -158,6 +166,7 @@ async def get_capabilities(
     document = build_core_capabilities(
         embedding_available=emb_block["available"],
         embedding_reason=emb_block["reason_unavailable"],
+        embedding_index_status=index_status,
     )
     error = validate_capability_requirements(
         document,

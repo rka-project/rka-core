@@ -2731,6 +2731,23 @@
           "available": {
             "type": "boolean"
           },
+          "index_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ready",
+                  "partial",
+                  "reindexing",
+                  "failed",
+                  "unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "reason_unavailable": {
             "anyOf": [
               {
@@ -2748,6 +2765,16 @@
               "lexical"
             ],
             "type": "string"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [

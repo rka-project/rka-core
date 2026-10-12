@@ -346,6 +346,28 @@ async def test_parity_search_query_search(captured_calls):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("has_results", [False, True])
+async def test_search_surfaces_partial_semantic_warning(captured_calls, has_results):
+    leg, _, set_factory, switch_to = captured_calls
+
+    def factory(method, path):
+        if path == "/api/search":
+            return (200, [{"entity_type": "journal", "entity_id": "jrn_example",
+                           "title": "Synthetic example"}] if has_results else [])
+        if path == "/api/maintenance/summary":
+            return (200, {"total_items": 0})
+        if path == "/api/capabilities":
+            return (200, {"embedding": {"available": True, "index_status": "partial"}})
+        return (200, {})
+
+    set_factory(factory)
+    switch_to(leg)
+    result = await mcp_mod.rka_search(query="needle", project_id="prj_t")
+    assert "Partial semantic coverage" in result
+    assert "keyword-searchable" in result
+    assert "FTS-only" not in result
+
+
 async def test_parity_create_mission_verb(captured_calls):
     leg, ver, set_factory, switch_to = captured_calls
     set_factory(lambda m, p: (200, {

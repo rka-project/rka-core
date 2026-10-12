@@ -154,6 +154,8 @@ inherited, and the child exits when its parent dies.
   Existing durable entity jobs retain their normal finite retry/failed-state
   behavior. Long content remains stored and available to lexical retrieval;
   unchanged oversized input will not become embeddable merely by retrying it.
+  A terminal failed backfill may expose a verified subset as `partial` (below);
+  the job remains failed and rejected rows are not marked embedded.
 - `embedding_resource_busy`: another inference is active; retry later. Busy or
   input rejection does not itself mark a reachable provider unavailable.
 - `embedding_call_timeout`: the whole-call deadline expired. Core terminates its
@@ -305,11 +307,37 @@ coverage without running inference; inspection does not certify model readiness.
 
 An `embedding_input_limit` error is not an OOM and is not a completed index:
 valid rows can have committed vectors while an oversized row remains unembedded.
-The original long text stays intact and searchable lexically. A failed global
-generation remains lexical until full coverage/consistency passes; repeated API
-restarts do not reset exhausted jobs. Reducing batch size alone cannot admit a
+The original long text stays intact and searchable lexically. After terminal
+backfill failure, a nonempty subset can become **`partial`**, but only after
+snapshot verification of the active space, physical dimensions, vector/metadata
+pairing and every stored pair's canonical source hash. Missing source coverage
+is allowed; mixed-space, stale, orphaned, malformed or otherwise unverified
+stored pairs keep the generation **`failed`** and lexical-only. Verification is
+bounded to 50,000 source rows / a 30-second checked deadline, with a 2 MiB
+per-record source-field preflight and 50,000-row derived-table caps; exceeding the
+budget also keeps search closed. It does not invoke inference or rewrite any
+research records, vectors, metadata, provider configuration or job history.
+
+`partial` permits hybrid retrieval for existing verified vectors. It does **not**
+certify full coverage or successful backfill. `/api/capabilities` includes
+`embedding.index_status="partial"` and a warning; the dashboard and MCP search
+surface the limitation. Records without vectors retain keyword retrieval.
+The exhausted/cancelled job and its error remain visible; repeated API restarts
+do not reset its attempts. An old matching failed generation is verified during
+normal startup, without retrying inference. An explicit retry returns the index
+to `reindexing`; only a complete, consistent backfill can return it to `ready`.
+Backend unavailability still degrades queries to lexical retrieval even when
+the stored index is partial. Reducing batch size alone cannot admit a
 single row larger than the input ceiling. Automatic chunking and truncation are
 not part of this fix.
+
+Migration 060 only extends the derived index-state constraint; existing state,
+source rows, vectors and metadata are retained. Update API, worker and local MCP
+together. Keep a quiesced DB/config backup before upgrading. Older binaries do
+not recognize partial readiness and must not run alongside the new version;
+an image-only downgrade is not a complete rollback. Restore the pre-upgrade
+backup with all DB clients stopped if rolling back before accepting new writes.
+Do not restore an older backup over new research records.
 
 For a 768 → 384 model change, the supported procedure is now
 [`rka admin embedding rebuild`](embedding-inspection.md#offline-rebuild-interrupted-recovery-and-rollback),

@@ -17,6 +17,24 @@ const capabilities = (available, search_mode) => ({
 test("only a confirmed available hybrid runtime advertises semantic search", () => {
   assert.equal(embeddingStatus(capabilities(true, "hybrid"), false).mode, "hybrid")
 })
+test("verified partial coverage is visible and does not hide pending records", () => {
+  const data = capabilities(true, "hybrid")
+  data.embedding.index_status = "partial"
+  const result = embeddingStatus(data, false)
+  assert.equal(result.mode, "hybrid")
+  assert.match(result.label, /Partial semantic/)
+  assert.match(result.description, /keyword-searchable/)
+  assert.match(result.description, /still needs attention/)
+})
+test("partial index never overrides provider unavailability or failed discovery", () => {
+  const data = capabilities(false, "lexical")
+  data.embedding.index_status = "partial"
+  data.embedding.reason_unavailable = "backend unavailable"
+  const result = embeddingStatus(data, false)
+  assert.equal(result.mode, "lexical")
+  assert.equal(result.label, "Keyword search only")
+  assert.equal(embeddingStatus(data, true).mode, "unknown")
+})
 for (const reason of ["disabled", "backend unavailable", "index rebuilding", "sqlite-vec not loaded"]) {
   test(`${reason}: lexical status never advertises enabled semantics`, () => {
     const data = capabilities(false, "lexical")

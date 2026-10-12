@@ -443,6 +443,8 @@ export interface CoreCapabilities {
     available: boolean
     reason_unavailable: string | null
     search_mode: "lexical" | "hybrid"
+    index_status?: "ready" | "partial" | "reindexing" | "failed" | "unavailable" | null
+    warning?: string | null
   }
 }
 
