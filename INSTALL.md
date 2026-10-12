@@ -349,7 +349,7 @@ See [remote access status](docs/REMOTE_ACCESS.md).
 
 ### Wrapper script paths (after plugin install)
 
-The plugin install copies its files to `~/.claude/plugins/cache/rka/rka/<version>/` (macOS/Linux) or `%USERPROFILE%\.claude\plugins\cache\rka\rka\<version>\` (Windows). Claude Code invokes the wrapper with `uv run --no-project <path>/bin/rka-mcp-bridge.py`; the Desktop setup helper records an absolute path to `uv` for GUI reliability.
+The plugin install copies its files to `~/.claude/plugins/cache/rka/rka/<version>/` (macOS/Linux) or `%USERPROFILE%\.claude\plugins\cache\rka\rka\<version>\` (Windows). Claude Code invokes the wrapper with `uv run --no-project --isolated <path>/bin/rka-mcp-bridge.py`; the Desktop setup helper records an absolute path to `uv` for GUI reliability.
 
 ### Backend connection (used by the wrapper)
 
@@ -631,6 +631,7 @@ Run `codex mcp --help` first; older Codex CLI builds do not provide `mcp add`. E
 | RKA tools missing in Claude Code | Plugin not installed, or VSCode window not reloaded | `/plugin list` to verify; reload window with Cmd+Shift+P → "Developer: Reload Window" |
 | All RKA writes land in `proj_default` | LLM forgot to pass `project_id` on a write call (v2.6+ requires it as a kwarg) | In v2.7.0+ the error surface is a Pydantic `ValidationError` (`Field required: project_id for operation X`) raised by FastMCP at schema-validate time, not a `TypeError`. If you see writes silently landing in `proj_default`, you are on a pre-v2.6 install — upgrade. If on v2.7.0+, ask the LLM at conversation start to pin `project_id` and thread it through every call. |
 | SessionStart hook says "RKA NOT reachable" | Docker stopped or wrong API URL | Run `docker compose up -d`; check `integration.json`'s `api_endpoint_url` |
+| Claude Code's MCP log shows `[Errno 2] No such file or directory` naming a `.venv/bin/rka` and then `Connection closed`, or the RKA tools run a build you did not install | The session's project directory holds a `.venv` with its own `rka` script, stale or a different build. A plugin copy that launched the wrapper with plain `uv run --no-project` let uv put that venv first on `PATH`, and the wrapper ran it | Reinstall the plugin so `.mcp.json` passes `--isolated`. The wrapper now prefers `~/.local/bin/rka`, tries `VIRTUAL_ENV` entries last, and skips a candidate whose shebang interpreter is missing or whose `--version` fails. It logs `NOTICE: skipped rka candidate <path> (<origin>): <reason>` for each one. Keep the uv-tool install current with `uv tool install --force --reinstall .` from the rka repo. [How the wrapper finds rka](plugin/README.md#how-the-wrapper-finds-rka) lists the resolution order |
 | Wrapper rejects `backend_version` as too old | `integration.json` explicitly reports a backend older than the plugin minimum | Upgrade RKA (`git pull`, reinstall the tool, and rebuild containers) or use a plugin compatible with that backend. If the file only has legacy `version`, migrate it to `schema_version` + `backend_version`; legacy `version` is not used for the gate. |
 
 ### Windows specifically
@@ -716,7 +717,7 @@ After the upgrade the MCP tools may report `{"status":"unhealthy","error":""}` e
 ```json
 "rka": {
   "command": "uv",
-  "args": ["run", "--no-project", "${CLAUDE_PLUGIN_ROOT}/bin/rka-mcp-bridge.py"],
+  "args": ["run", "--no-project", "--isolated", "${CLAUDE_PLUGIN_ROOT}/bin/rka-mcp-bridge.py"],
   "env": { "RKA_API_URL": "http://127.0.0.1:9712" }
 }
 ```
@@ -744,7 +745,7 @@ The path in the command line is the copy in use. If it points at the cache, refr
 
 #### 5. Replace legacy `python3` launcher entries
 
-Older plugin copies used `command: "python3"`, which could resolve to the Microsoft Store alias under a bare Windows process spawn. Current plugin manifests use `uv run --no-project`, and the Desktop helper writes the absolute `uv.exe` path. If a config still shows `python3`, reinstall the plugin and rerun `/rka-setup-claude-desktop`; do not hand-edit unrelated MCP entries.
+Older plugin copies used `command: "python3"`, which could resolve to the Microsoft Store alias under a bare Windows process spawn. Current plugin manifests use `uv run --no-project --isolated`, and the Desktop helper writes the absolute `uv.exe` path. If a config still shows `python3`, reinstall the plugin and rerun `/rka-setup-claude-desktop`; do not hand-edit unrelated MCP entries.
 
 ### macOS specifically
 
