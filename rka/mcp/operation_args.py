@@ -319,7 +319,8 @@ class QueryJournalArgs(ProjectScopedArgs, PaginatedFiltersMixin):
     """[ANY] List journal entries (notes, logs, directives).
 
     Filter keys: ``type``, ``phase``, ``confidence``, ``status``, ``since``,
-    ``source``, ``tags``.
+    ``source``, ``tags``. ``tags`` is a list; an entry matches only when it
+    carries every listed tag.
     """
 
     operation: Literal["journal"] = "journal"

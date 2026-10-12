@@ -289,8 +289,12 @@ class NoteService(BaseService):
         hide_superseded: bool = True,
         limit: int = 50,
         offset: int = 0,
+        tags: list[str] | None = None,
     ) -> list[JournalEntry]:
-        """List journal entries with filters."""
+        """List journal entries with filters.
+
+        ``tags`` narrows to entries that carry every requested tag.
+        """
         conditions = []
         params = [self.project_id]
 
@@ -319,6 +323,12 @@ class NoteService(BaseService):
             params.append(since)
         if hide_superseded:
             conditions.append("status != 'superseded'")
+        for tag in tags or []:
+            conditions.append(
+                "EXISTS (SELECT 1 FROM tags t WHERE t.entity_type = 'journal'"
+                " AND t.entity_id = journal.id AND t.project_id = ? AND t.tag = ?)"
+            )
+            params.extend([self.project_id, tag])
 
         where = " AND ".join(conditions) if conditions else "1=1"
         params.extend([limit, offset])

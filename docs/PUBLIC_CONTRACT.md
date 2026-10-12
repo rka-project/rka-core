@@ -199,6 +199,16 @@ existing 422 response. Journal listings mark bodies longer than 500 characters
 as truncated and identify the project-scoped `entity` read. A full changelog
 page does not establish completeness; use `changes_since` for cursor paging.
 
+`GET /api/notes` filters by `type`, `phase`, `confidence`, `importance`,
+`source`, `status`, `since`, and a repeatable `tags` query parameter
+(`?tags=a&tags=b`). An entry matches `tags` only when it carries every listed
+tag; the match is project-scoped and case-insensitive like tag storage. The
+MCP `journal` operation forwards `filters.source` and `filters.tags` to the
+same parameters. Through Core 3.0.1 both filters were accepted by the MCP
+schema and silently dropped before the request, so a caller received the
+unfiltered listing; an unfiltered result from an older backend is therefore
+not evidence that no entry carries the tag.
+
 ## Reviewing and updating snapshots
 
 Run the read-only check locally with:

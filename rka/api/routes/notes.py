@@ -77,13 +77,14 @@ async def list_notes(
     hide_superseded: bool = True,
     limit: int = Query(50, le=200),
     offset: int = 0,
+    tags: list[str] | None = Query(None, description="Repeatable; every tag must be present"),
     svc: NoteService = Depends(get_scoped_note_service),
 ):
     return await svc.list(
         type=type, phase=phase, confidence=confidence,
         importance=importance, source=source, status=status,
         since=since, hide_superseded=hide_superseded,
-        limit=limit, offset=offset,
+        limit=limit, offset=offset, tags=tags,
     )
 
 
