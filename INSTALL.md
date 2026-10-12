@@ -509,6 +509,7 @@ Use this path if:
 - You're on a system without VSCode (e.g., Claude Code CLI on a server)
 - You're scripting RKA install in CI (note: plugins don't load in `claude -p` print mode — an empirical finding)
 - You want to run RKA without the plugin layer at all
+- You cannot or do not want to run Docker (see §8.2, Option B)
 
 ### 8.1 — Install the RKA stdio binary
 
@@ -538,6 +539,10 @@ If `uv` is missing, use the [official uv installer](https://docs.astral.sh/uv/ge
 
 ### 8.2 — Start the backend
 
+Choose one backend. Docker is the full profile: API, background worker, and the web dashboard. The Dockerless path runs the same API and worker as local processes from the binary installed in §8.1; it gives you REST, MCP, the CLI and the worker, and the dashboard only if you build it (limits below).
+
+**Option A — Docker (recommended)**
+
 ```bash
 docker compose up -d
 curl http://127.0.0.1:9712/api/health
@@ -549,6 +554,35 @@ Windows PowerShell uses the same Compose command and this health check:
 docker compose up -d
 Invoke-RestMethod http://127.0.0.1:9712/api/health
 ```
+
+**Option B — Dockerless (`rka start-all`)**
+
+Reinstall the binary with the `embeddings` extra if you want semantic search; the base install is lexical-only. Then start both processes:
+
+```bash
+uv tool install --force --reinstall ".[embeddings]"
+rka start-all
+curl http://127.0.0.1:9712/api/health
+```
+
+`rka start-all` starts the API server and the background worker as detached processes, writes `pids/serve.pid`, `pids/worker.pid`, `serve.log` and `worker.log` under the data directory, and prints both PIDs. Data lives in `~/.rka` by default; `RKA_DATA_DIR` overrides it and must be an absolute path. `rka stop-all` stops both. `rka start-all --foreground` starts only the API, so in that mode run `rka worker` in a second shell with the same data directory.
+
+Windows PowerShell: run the two processes in separate windows (both read the same `RKA_DATA_DIR`), then check health:
+
+```powershell
+& "$env:USERPROFILE\.local\bin\rka.exe" serve
+& "$env:USERPROFILE\.local\bin\rka.exe" worker
+Invoke-RestMethod http://127.0.0.1:9712/api/health
+```
+
+Dockerless limits:
+
+- **No bundled dashboard.** The wheel does not contain `web/dist`. `rka serve` serves the dashboard only when `web/dist` exists in the current directory or next to a source checkout: run `cd web && npm ci && npm run build` once in the clone from §8.1 (requires Node.js) and start the backend from that directory, or skip the dashboard and use REST, MCP and the CLI.
+- **Semantic search needs an extension-capable Python.** The `embeddings` extra provides `sqlite-vec` and FastEmbed, but the interpreter must allow loadable SQLite extensions. The uv-managed Python used by `uv tool install` supports this; some system Pythons do not (see §9). Without it the backend runs with FTS only and `/api/health` reports `vec_available: false`.
+- **Nothing restarts the processes after a reboot.** Run `rka start-all` again, or register your own launchd or systemd unit. Docker's `restart: unless-stopped` is the equivalent.
+- **Same database contract as Docker.** Server and worker must share one data directory and database; keep the `rka.db.phase2.lock` and `rka.db.runtime-locks` entries next to the database and never delete them to clear contention.
+
+The MCP binary from §8.1 proxies to `http://127.0.0.1:9712` for both options, so §8.3 to §8.5 apply unchanged.
 
 ### 8.3 — Configure Claude Desktop manually
 
