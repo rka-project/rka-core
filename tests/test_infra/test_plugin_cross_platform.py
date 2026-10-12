@@ -44,6 +44,7 @@ def test_plugin_launchers_use_uv_without_a_platform_specific_python_name() -> No
         "args": [
             "run",
             "--no-project",
+            "--isolated",
             "${CLAUDE_PLUGIN_ROOT}/bin/rka-mcp-bridge.py",
         ],
     }
@@ -120,5 +121,5 @@ def test_desktop_helper_persists_an_absolute_uv_launcher(
 
     assert helper.mcp_entry(wrapper) == {
         "command": str(uv.resolve()),
-        "args": ["run", "--no-project", str(wrapper)],
+        "args": ["run", "--no-project", "--isolated", str(wrapper)],
     }
