@@ -71,6 +71,20 @@ id if a mission was running.
   `contradicts` relation between claims on the strength of a
   `resource_priority` or `implementation_failure` stop.
 
+## Mission completion is separate from the research outcome
+
+If required work remains unfinished, preserve `partial`, `blocked`, or
+`cancelled` as appropriate and save the progress/stop summary as a
+`record_note` linked through `provenance.related_mission`. Do not call `submit_report`
+for an unfinished mission: Core changes `partial` to `complete` on report
+submission and rejects reports for `blocked` or `cancelled` missions.
+
+An Inconclusive scientific result does not by itself mean the mission is
+unfinished. If the agreed work and acceptance criteria are satisfied, reconcile
+all tasks and submit a completion report normally, preserving the Inconclusive
+result and its limits. A Stop / Pivot Note records the direction's fate; it
+does not force the mission into a non-complete state.
+
 ## Save to RKA (stable operations only)
 
 ```python
@@ -105,8 +119,9 @@ rka_execute(args={"operation": "supersede_decision",
                   "rationale": "<why, citing the stop note>",
                   "related_journal": ["jrn_<stop note>"]})
 
-# 3. If a mission was running, close it honestly: partial or cancelled, not
-#    complete, and submit a report that names the category.
+# 3. Only if required mission work is unfinished, keep a non-complete state.
+#    Step 1 is its linked stop summary; do not submit a completion report.
+#    Use blocked or cancelled instead when that is the actual task state.
 rka_execute(args={"operation": "update_mission_status",
                   "project_id": "prj_...", "mission_id": "mis_...",
                   "status": "partial"})
@@ -142,7 +157,7 @@ template: stop-pivot-note@0.1.0
 project: prj_SYNTHETIC
 author_role: executor
 status: confirmed
-sources: jrn_SYN0012 (hypothesis note), jrn_SYN0020, jrn_SYN0021 (run observations), mis_SYN0030 (report)
+sources: jrn_SYN0012 (hypothesis note), jrn_SYN0020, jrn_SYN0021 (run observations), jrn_SYN0022 (progress log)
 review_anchor: dec_SYN0011, mis_SYN0030
 
 # Stop / Pivot Note: battery-aware sampling, season 1
@@ -154,7 +169,9 @@ dec_SYN0011 (battery-aware sampling interval), contract jrn_SYN0012.
 ## Evidence for the reason
 Two of three node pairs lost their wired reference sensor after week 6
 (jrn_SYN0020, jrn_SYN0021). Reference outage exceeded 10 % of days, which is
-the Inconclusive criterion in jrn_SYN0012 §6. Mission report mis_SYN0030.
+the Inconclusive criterion in jrn_SYN0012 §6. Progress log jrn_SYN0022 is
+linked to mis_SYN0030, which remains partial with required runs unfinished;
+no completion report was submitted.
 
 ## Conditions under which the reason holds
 Outdoor plot A, reference sensor model R-2, season 2026.

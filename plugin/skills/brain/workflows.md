@@ -139,9 +139,11 @@ Templates and shared conventions: `templates/README.md`, `templates/gap-note.md`
 |---|---|---|---|
 | Gap Note | `record_note`, tags `rwf-gap-note` `rwf-v0`, `related_literature` | `record_decision(kind="research_question")` after PI confirmation | none |
 | Hypothesis & Test | `record_note`, tags `rwf-hypothesis-test` `rwf-v0` | `record_decision(kind="design_choice", assumptions=[H1.., scope])` | `create_mission(acceptance_criteria=<criteria verbatim>)` |
-| Stop / Pivot Note | `record_note`, tags `rwf-stop-pivot` `rwf-v0` `<category>` | `update_decision(status, abandonment_reason)` or `supersede_decision` | `update_mission_status("partial" \| "cancelled")` and a report |
+| Stop / Pivot Note | `record_note`, tags `rwf-stop-pivot` `rwf-v0` `<category>` | `update_decision(status, abandonment_reason)` or `supersede_decision` | For unfinished work, `update_mission_status` and a linked journal summary; no completion report |
 
 No new journal type, tag enum, schema, API or service is involved, and none of the preview operations (experiments, claim scope, interpretation staging) is required. If a step appears to need one, raise a checkpoint instead.
+
+Mission completion and scientific outcome are separate. For unfinished work, keep the appropriate `partial` / `blocked` / `cancelled` state and do not call `submit_report`: it completes a `partial` mission and rejects `blocked` or `cancelled` missions. Record the progress/stop summary as a journal linked to the mission. An Inconclusive result may still accompany a normal completion report when all agreed work and acceptance criteria are satisfied.
 
 ### Criteria discipline
 

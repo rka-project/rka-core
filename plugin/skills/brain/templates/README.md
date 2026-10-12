@@ -61,7 +61,8 @@ works on every version; see the retrieval notes in `executor/workflows.md`.
 Three different things are easy to conflate. Keep them apart in every note:
 
 - `confidence=verified` on a journal entry means the sources cited were
-  checked. It says nothing about scientific support.
+  checked. PI confirmation alone does not set it; record source-verification
+  evidence separately. It says nothing about scientific support.
 - `evidence_status` on a claim (`unassessed`, `supported`,
   `partially_supported`, `inconclusive`, `contradicted`) is the Brain's
   scientific assessment through `review_claims`. The Executor never sets it on
@@ -73,8 +74,8 @@ Three different things are easy to conflate. Keep them apart in every note:
 
 - Pass a stable `request_id` on `record_note`. On timeout, read
   `note_write_receipt` with that id before retrying; a retry must carry the
-  identical payload. No other write operation is idempotent; never assume a
-  retry is safe.
+  identical payload. Other writes do not share this journal request-id
+  protocol; read back state and check their own retry contracts.
 - Saving one template often means several writes (note, decision, mission,
   back-links). They are not one transaction. Report partial success entry by
   entry, with the ids that were created.

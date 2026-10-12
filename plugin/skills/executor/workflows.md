@@ -200,12 +200,16 @@ Put what you found in the Backbrief: which stopped directions overlap the missio
 
 ### Writing a Stop / Pivot Note as the Executor
 
-You write one when the mission cannot reach a Support or Refute outcome: a dependency, environment, data access or tooling failure (`implementation_failure`), or the Inconclusive criterion was met (`insufficient_evidence`). The Brain or PI writes `resource_priority` and `counterevidence` stops. Fill `../brain/templates/stop-pivot-note.md`; set the mission `partial` or `blocked`, never `complete`; submit a report whose summary names the category; propose the decision's new status in the report rather than changing it yourself.
+You write one when a dependency, environment, data access or tooling failure prevents the specified test (`implementation_failure`), or the Inconclusive criterion was met (`insufficient_evidence`). The Brain or PI writes `resource_priority` and `counterevidence` stops. Fill `../brain/templates/stop-pivot-note.md` and propose the decision's new status in the note rather than changing it yourself.
+
+If required work remains unfinished, use `partial` or `blocked` (or `cancelled` when authorized) and save the progress/stop summary with `record_note` and `provenance.related_mission`; do not call `submit_report`. That operation changes `partial` to `complete` and rejects `blocked` or `cancelled` missions. Read the mission and note back to verify that the non-complete state and evidence both persisted.
+
+Scientific Inconclusive is not a mission lifecycle status. If all agreed work and acceptance criteria are satisfied, follow the normal mission closeout preflight and submit the completion report, explicitly stating the Inconclusive result and its limits. Never mark an unfinished task complete merely to enable report submission.
 
 ### Write discipline for every save above
 
 - `record_note` with a stable `request_id`. On timeout, read `note_write_receipt` first; retry with the identical payload only. A receipt proves persistence, not that anyone read the note.
-- `update_decision`, `supersede_decision`, `create_mission`, `update_mission_status` and `submit_report` are not idempotent. Do not retry them blind; read the entity back and decide.
+- Other writes do not share the journal's `request_id` protocol. Do not retry them blind; read the entity back and check that operation's retry contract.
 - A template save is several writes with no transaction around them. If one fails, report which ids exist and which do not; do not describe the set as saved.
 - `confidence="verified"` means sources were checked. Scientific support is `evidence_status`, set by the Brain. Do not conflate them in notes or reports.
 - Preview operations (experiments, claim scope, interpretation staging) are not part of this flow. If one seems necessary, stop and raise a checkpoint rather than loading it.

@@ -130,7 +130,7 @@ scope readiness as a scientific-support verdict.
 
 ## Evidence-led research workflow (RWF v0)
 
-When a mission's context names a Hypothesis & Test note, read it first and record every observation against its pre-registered Support / Refute / Inconclusive criteria, one `record_note` per run with `confidence="tested"` and `provenance.related_mission`. An environment or implementation failure is Inconclusive, never Refute; close the mission `partial` or `blocked` and write a Stop / Pivot Note with `stop_reason: implementation_failure`. Do not edit the criteria; a change is a new note that supersedes the old one, written by the Brain.
+When a mission's context names a Hypothesis & Test note, read it first and record every observation against its pre-registered Support / Refute / Inconclusive criteria, one `record_note` per run with `confidence="tested"` and `provenance.related_mission`. An environment or implementation failure is Inconclusive, never Refute; write a Stop / Pivot Note with `stop_reason: implementation_failure`. If required work remains unfinished, keep the mission `partial` or `blocked` and do not call `submit_report`; save the progress summary as a linked journal note. An Inconclusive result can still complete a mission whose agreed work and acceptance criteria are satisfied. Do not edit the criteria; a change is a new note that supersedes the old one, written by the Brain.
 
 Before starting or resuming any direction, recover its negative history with three reads, not one: `mission_guard`, a `search` for `rwf stop pivot <topic>` scoped to journal entries, and `decision_tree` with `active_only: false` read for `abandoned` / `revisit` / `superseded` nodes. `mission_guard` does not list stopped decisions.
 

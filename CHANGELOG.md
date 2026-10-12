@@ -16,8 +16,12 @@ All notable changes to RKA are documented here. Format loosely follows
   and PI skills move to 2.8.0 with pointer sections; the plugin manifest moves
   to 2.1.0. Templates are client-side conventions saved through existing
   stable operations; no schema, API, service, journal enum or preview
-  dependency is added. Offline contract tests live in
-  `tests/skills/test_rwf_templates.py`. Documents, but does not fix, that the
+  dependency is added. PI confirmation does not promote source confidence;
+  unfinished work uses linked journal summaries rather than completion
+  reports, independently of scientific Support / Refute / Inconclusive.
+  Offline shape and isolated lifecycle tests live in
+  `tests/skills/test_rwf_templates.py` and `test_rwf_lifecycle_contract.py`.
+  Documents, but does not fix, that the
   MCP `journal` operation's advertised `tags` / `source` filters are not
   applied at this version.
 - Single journal/note/directive creation accepts an optional project-scoped

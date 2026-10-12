@@ -48,9 +48,11 @@ Copy the shared header from `README.md` with `template: gap-note@0.1.0`.
 ## Rules
 
 - Not found is not nobody did it. Section 6 must stay inside sections 2 and 5.
-- A gap is a reading of sources, not a research result. Save it with
-  `confidence="hypothesis"` until the PI confirms the direction; `verified`
-  afterwards means the citations were checked, not that the gap is real.
+- A gap is a reading of sources, not a research result. Start with
+  `confidence="hypothesis"`. PI confirmation authorizes the direction; it
+  changes the template header to `status: confirmed`, not source confidence.
+  Only a separate source check with recorded verification evidence permits
+  `confidence="verified"`; even then, it does not prove that the gap is real.
 - Do not infer a gap from titles or abstracts alone without saying so in the
   locator.
 - Methodological novelty is one kind of gap. Replication, measurement,
@@ -80,15 +82,21 @@ rka_execute(args={"operation": "record_decision",
                   "related_journal": ["jrn_<gap note>"],
                   "related_literature": ["lit_...", "lit_..."]})
 
-# 3. Back-link the note to the new decision and mark it confirmed.
+# 3. Back-link the note and update only its confirmation header.
+#    Keep the full body, source limitations, and existing confidence.
 rka_execute(args={"operation": "update_note",
                   "project_id": "prj_...", "id": "jrn_<gap note>",
                   "related_decisions": ["dec_<research question>"],
-                  "confidence": "verified"})
+                  "content": "<same full Gap Note with status: confirmed and review_anchor: dec_<research question>>"})
 ```
 
 The PI's confirmation itself is a separate `record_note` with `source="pi"`
 and `verbatim_input`, linked to the same decision.
+
+Do not add `confidence="verified"` to step 3. If the cited locators are
+independently checked later, record what was checked and its limits in a
+linked verification note before a separate confidence update. PI approval,
+source grounding, and scientific support are different review results.
 
 ## Retrieve later
 
