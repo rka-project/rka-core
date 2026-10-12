@@ -7,6 +7,23 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Added
 
+- RWF v0 evidence-led research workflow templates in the packaged role
+  skills: Gap Note, Hypothesis & Test, and Stop / Pivot Note under
+  `rka/skills/brain/templates/` (mirrored to the Claude Code plugin), with a
+  shared header, tag convention (`rwf-gap-note`, `rwf-hypothesis-test`,
+  `rwf-stop-pivot`, `rwf-v0`), four stop-reason categories, and a three-read
+  recovery procedure for negative history at mission pickup. Brain, Executor
+  and PI skills move to 2.8.0 with pointer sections; the plugin manifest moves
+  to 2.1.0. Templates are client-side conventions saved through existing
+  stable operations; no schema, API, service, journal enum or preview
+  dependency is added. PI confirmation does not promote source confidence;
+  unfinished work uses linked journal summaries rather than completion
+  reports, independently of scientific Support / Refute / Inconclusive.
+  Offline shape and isolated lifecycle tests live in
+  `tests/skills/test_rwf_templates.py` and `test_rwf_lifecycle_contract.py`.
+  Documents, but does not fix, that the
+  MCP `journal` operation's advertised `tags` / `source` filters are not
+  applied at this version.
 - Single journal/note/directive creation accepts an optional project-scoped
   `request_id` through REST and MCP. Matching retries return the original
   creation snapshot; different intent returns 409 without another write.

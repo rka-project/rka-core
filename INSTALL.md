@@ -613,6 +613,8 @@ codex mcp add rka -- "$env:USERPROFILE\.local\bin\rka.exe" mcp
 
 Run `codex mcp --help` first; older Codex CLI builds do not provide `mcp add`. Editing `config.toml` is the version-independent path.
 
+**Role guides and templates from Codex.** The Brain, Executor and PI guides and the RWF v0 research templates ship inside the `rka` MCP server, so nothing else is installed for Codex. In a Codex session, call `rka_load_tools(["rka_read_skill", "rka_start_session"])` once, then `rka_start_session("executor")` for the role guide or `rka_read_skill("brain", "templates/gap-note.md")` for a template. RKA does not write into Codex's `.agents/skills` folders; the MCP route is the supported one.
+
 ---
 
 ## 9. Troubleshooting

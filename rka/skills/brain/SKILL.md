@@ -1,10 +1,10 @@
 ---
 name: rka-brain
 description: Strategic AI for RKA-managed research projects. Interprets evidence, maintains the research graph, makes decisions, and directs the Executor. Load on session start, before presenting decisions to the PI, or when reasoning about provenance.
-version: 2.7.0
+version: 2.8.0
 ---
 
-**Skill version: 2.7.0 — last updated 2026-06-02**
+**Skill version: 2.8.0 — last updated 2026-10-11**
 
 # Brain Skill
 
@@ -67,6 +67,7 @@ When a workflow below references a legacy tool name like `rka_add_decision`, tre
 - [`workflows.md`](workflows.md) — session-start walkthrough, claim extraction, cluster management, freshness, validation gates, literature workflow, evidence assembly, mission decomposition, Research Protocol (Gate 0) template.
 - [`decision_ux.md`](decision_ux.md) — Confirmation Brief template and multi-choice decision UX (strip-then-re-inject ordering).
 - [`examples.md`](examples.md) — worked examples for PI attribution, Confirmation Brief, tags, common anti-patterns.
+- [`templates/README.md`](templates/README.md) — RWF v0 Gap Note, Hypothesis & Test, and Stop / Pivot Note templates with the shared header, tags, and save/retrieve recipes; the flow is `workflows.md` § "Evidence-led research workflow (RWF v0)".
 
 ---
 
@@ -139,6 +140,16 @@ Full protocol (all three stages, schema rationale, elicitation substrate, calibr
 Before opening a new research direction, co-author a Research Protocol with the PI as a `directive` journal entry tagged `research-protocol`. This is the contract against which all subsequent decisions, missions, and findings are evaluated. Periodic review: search `tags:research-protocol`, check current work still aligns with the protocol's scope and assumptions; if assumptions have been invalidated, flag with a Confirmation Brief.
 
 Template + when-to-create triggers: `workflows.md` § "Research Protocol — Gate 0".
+
+---
+
+## Evidence-led research workflow (RWF v0)
+
+Three shared templates make a direction recoverable from RKA alone: a Gap Note before a research question opens, a Hypothesis & Test contract before a mission runs, and a Stop / Pivot Note whenever work ends without a Support or Refute outcome or the direction turns. The Brain writes the first two and proposes stop reasons; the Executor records observations against the contract and writes Stop / Pivot Notes for implementation failures; the PI confirms the gap, the criteria, and every stop or reopen.
+
+Templates: [`templates/README.md`](templates/README.md), [`templates/gap-note.md`](templates/gap-note.md), [`templates/hypothesis-test.md`](templates/hypothesis-test.md), [`templates/stop-pivot-note.md`](templates/stop-pivot-note.md). Sequence, entity mapping and criteria discipline: `workflows.md` § "Evidence-led research workflow (RWF v0)".
+
+Rules that hold every session: a gap statement stays inside the sources it lists; Support / Refute / Inconclusive criteria are saved before the run; one stop reason per note (`counterevidence`, `implementation_failure`, `resource_priority`, `insufficient_evidence`); a valid negative observation stays `active`. Everything saves through stable `record_note` / `record_decision` / `update_decision` / `supersede_decision` / `create_mission`; no preview operation is required.
 
 ---
 
@@ -425,5 +436,6 @@ falsified. Call it *before* planning work, not after it fails.
 - Session-start walkthrough, claim extraction, cluster management, gates, freshness, literature, evidence assembly: [`workflows.md`](workflows.md).
 - Multi-choice decision UX + Confirmation Brief template: [`decision_ux.md`](decision_ux.md).
 - Worked examples for PI attribution, tags, anti-patterns: [`examples.md`](examples.md).
+- RWF v0 templates (Gap Note, Hypothesis & Test, Stop / Pivot Note): [`templates/README.md`](templates/README.md).
 - Executor counterpart skill: [`../executor/SKILL.md`](../executor/SKILL.md).
 - PI counterpart skill: [`../pi/SKILL.md`](../pi/SKILL.md).

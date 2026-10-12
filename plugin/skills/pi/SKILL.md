@@ -1,10 +1,10 @@
 ---
 name: rka-pi
 description: PI quick reference for RKA-managed research projects. Resolves checkpoints, sets direction, preserves original intent. Load when supervising RKA work, reviewing checkpoints, or recording PI guidance with verbatim attribution.
-version: 2.7.0
+version: 2.8.0
 ---
 
-**Skill version: 2.7.0 — last updated 2026-06-02**
+**Skill version: 2.8.0 — last updated 2026-10-11**
 
 # PI Skill
 
@@ -68,6 +68,12 @@ rka_execute(args={"operation": "resolve_checkpoint",
 - Record PI guidance with `rka_execute(args={"operation": "record_note", "source": "pi", "verbatim_input": "...", ...})`.
 - Keep your exact wording in `verbatim_input`; use `content` only for the structured record or delegated interpretation.
 - Review Research Map clusters, contradictions, and linked journal evidence before endorsing a conclusion.
+
+## Evidence-led research workflow (RWF v0)
+
+Three confirmations are yours and no one else's. Confirm a Gap Note before it becomes a research question: its bounded statement must stay inside the sources it lists, and "not found" must not have become "nobody did it". Ratify the Support / Refute / Inconclusive criteria in a Hypothesis & Test note before the mission runs; a criterion changed after the data exists is an interpretation, and the note must say so. Approve every Stop / Pivot Note's reason category and reopen condition; an implementation or resource stop is not evidence against the mechanism, and a valid negative observation stays `active` rather than being retracted.
+
+Your words go in `verbatim_input` with `source="pi"`; the templates' prose is the agent's restatement. Templates: [`../brain/templates/README.md`](../brain/templates/README.md). Brain and Executor procedures: `../brain/workflows.md` and `../executor/workflows.md`, each § "Evidence-led research workflow (RWF v0)".
 
 ## Retrieval Strategy
 

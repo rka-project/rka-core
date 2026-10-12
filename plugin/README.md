@@ -15,7 +15,7 @@ This is the official Claude Code plugin for [RKA](https://github.com/rka-project
 | Surface | What | When |
 |---|---|---|
 | **MCP server** | Typed `rka_query` / `rka_execute` dispatch plus schema/help operations | Available in every Claude Code session after install |
-| **3 skills** | Brain, Executor, and PI | Loaded on demand for role-specific guidance |
+| **3 skills** | Brain, Executor, and PI, plus the shared RWF v0 templates (Gap Note, Hypothesis & Test, Stop / Pivot Note) under `skills/brain/templates/` | Loaded on demand for role-specific guidance |
 | **5 slash commands** | Status, search, pending, explicit project pinning, and Desktop setup | Quick shortcuts; setup is one-time |
 | **SessionStart hook** | Cross-platform Python; reports backend reachability and reminds callers that project ids are explicit | Fires automatically on every new session |
 
