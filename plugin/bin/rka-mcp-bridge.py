@@ -13,9 +13,11 @@ Exec strategy:
   a child and exits the original, which breaks stdio piping with Claude.
   subprocess.run waits for the child and exits with its return code.
 
-If integration.json is missing, falls back to invoking `rka` from PATH
-(uv-tool installs land at ~/.local/bin/rka on macOS/Linux or
-%USERPROFILE%\\.local\\bin\\rka.exe on Windows).
+If integration.json is missing, picks the rka to run itself: the uv-tool
+install first (~/.local/bin/rka on macOS/Linux, %USERPROFILE%\\.local\\bin\\rka.exe
+on Windows), then PATH in order with anything under VIRTUAL_ENV last. Each
+candidate is probed (shebang interpreter present, `--version` exits 0) and a
+rejected one is named on stderr.
 
 If `binary_path` points at a Python script (`.py` / `.pyw`), the wrapper
 re-execs it under the current Python interpreter — handles a possible
@@ -32,7 +34,9 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal, NamedTuple
 
 # Oldest RKA Core backend this plugin can drive. Plugin 2.x intentionally
 # requires the post-split Core 3.x surface so an older backend cannot
@@ -94,15 +98,60 @@ def err(msg: str) -> None:
     print(f"[rka-mcp-bridge] {msg}", file=sys.stderr)
 
 
-def find_rka_on_path() -> str | None:
-    """Resolve the rka binary via PATH lookup (fallback when integration.json absent)."""
-    candidate = shutil.which("rka")
-    if candidate:
-        return candidate
-    # Common uv-tool install location not always on PATH.
-    home_local = Path.home() / ".local" / "bin" / ("rka.exe" if sys.platform == "win32" else "rka")
-    if home_local.is_file():
-        return str(home_local)
+VERSION_PROBE_TIMEOUT = 5.0
+
+
+class Candidate(NamedTuple):
+    path: str
+    origin: Literal["uv-tool", "PATH", "VIRTUAL_ENV"]
+
+
+def uv_tool_rka() -> Path:
+    return Path.home() / ".local" / "bin" / ("rka.exe" if sys.platform == "win32" else "rka")
+
+
+def rka_candidates(env: Mapping[str, str]) -> list[Candidate]:
+    """Entries under VIRTUAL_ENV go last. Claude Code starts this wrapper in the
+    session's project directory, so a venv active there is that checkout's build,
+    not the install the user set up.
+    """
+    venv = env.get("VIRTUAL_ENV")
+    venv_root = Path(venv).resolve() if venv else None
+    outside: list[Candidate] = []
+    inside: list[Candidate] = []
+    for entry in env.get("PATH", "").split(os.pathsep):
+        found = shutil.which("rka", path=entry) if entry else None
+        if not found:
+            continue
+        if venv_root is not None and Path(entry).resolve().is_relative_to(venv_root):
+            inside.append(Candidate(found, "VIRTUAL_ENV"))
+        else:
+            outside.append(Candidate(found, "PATH"))
+    preferred = [Candidate(str(uv_tool_rka()), "uv-tool")] if uv_tool_rka().is_file() else []
+    unique: dict[str, Candidate] = {}
+    for candidate in preferred + outside + inside:
+        unique.setdefault(os.path.realpath(candidate.path), candidate)
+    return list(unique.values())
+
+
+def choose_fallback_rka() -> str | None:
+    candidates = rka_candidates(os.environ)
+    for index, candidate in enumerate(candidates):
+        reason = rejection_reason(candidate.path)
+        if reason is not None:
+            err(f"NOTICE: skipped rka candidate {candidate.path} ({candidate.origin}): {reason}")
+            continue
+        if len(candidates) > 1 or candidate.origin == "VIRTUAL_ENV":
+            line = f"NOTICE: using {candidate.path} ({candidate.origin})"
+            if passed_over := candidates[index + 1 :]:
+                line += "; not tried: " + ", ".join(f"{c.path} ({c.origin})" for c in passed_over)
+            err(line + ".")
+        if candidate.origin == "VIRTUAL_ENV":
+            err(
+                "NOTICE: that is the active VIRTUAL_ENV's build, not the uv-tool install; "
+                "run `uv tool install --force --reinstall .` from the rka repo to get ~/.local/bin/rka."
+            )
+        return candidate.path
     return None
 
 
@@ -126,20 +175,51 @@ def is_python_script(path: str) -> bool:
     return path.lower().endswith((".py", ".pyw"))
 
 
+def binary_argv(binary_path: str, *args: str) -> list[str]:
+    if is_python_script(binary_path):
+        return [sys.executable, binary_path, *args]
+    return [binary_path, *args]
+
+
+def rejection_reason(path: str) -> str | None:
+    """A dead shebang fails only at exec time, with a bare "[Errno 2]" that names
+    the script rather than the missing interpreter.
+    """
+    if not is_executable(path) and not is_python_script(path):
+        return "not executable"
+    if sys.platform != "win32" and not is_python_script(path):
+        with open(path, "rb") as handle:
+            first_line = handle.readline(512)
+        if first_line.startswith(b"#!"):
+            tokens = first_line[2:].split()
+            if tokens and not Path(os.fsdecode(tokens[0])).exists():
+                return f"shebang interpreter missing: {os.fsdecode(tokens[0])}"
+    try:
+        result = subprocess.run(
+            binary_argv(path, "--version"),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=VERSION_PROBE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return f"--version did not finish within {VERSION_PROBE_TIMEOUT}s"
+    except OSError as exc:
+        return f"cannot execute: {exc}"
+    if result.returncode != 0:
+        tail = result.stderr.strip().splitlines()[-1:]
+        return f"--version exited {result.returncode}" + (f": {tail[0]}" if tail else "")
+    return None
+
+
 def run_binary(binary_path: str, env: dict[str, str]) -> None:
     """Replace this process with the rka binary (POSIX) or run-and-wait (Windows).
 
     Both paths inherit stdin/stdout/stderr from this wrapper, which inherited
     them from Claude — so MCP stdio passes through cleanly.
     """
-    # If binary_path is actually a Python script, re-exec via current
-    # interpreter so we don't depend on shebang handling on Windows.
-    if is_python_script(binary_path):
-        argv = [sys.executable, binary_path, "mcp"]
-        prog = sys.executable
-    else:
-        argv = [binary_path, "mcp"]
-        prog = binary_path
+    argv = binary_argv(binary_path, "mcp")
+    prog = argv[0]
 
     if sys.platform == "win32":
         # subprocess.run with default stdin/stdout/stderr=None inherits from
@@ -202,7 +282,7 @@ def main() -> None:
 
     # Resolve binary path: integration.json wins, else PATH lookup.
     if not binary_path:
-        binary_path = find_rka_on_path()
+        binary_path = choose_fallback_rka()
         if not binary_path:
             err("ERROR: rka binary not found. Either:")
             err("  1. Install via `uv tool install --force --reinstall .` from the rka repo (lands at ~/.local/bin/rka).")

@@ -30,7 +30,7 @@ RKA Core.
 
 Everything in this plugin works on **macOS, Windows, and Linux**:
 
-- **Wrapper script** (`bin/rka-mcp-bridge.py`): launched through `uv run --no-project`; no platform-specific Python command name is assumed.
+- **Wrapper script** (`bin/rka-mcp-bridge.py`): launched through `uv run --no-project --isolated`, so uv never adopts the session's working directory `.venv`. No platform-specific Python command name is assumed.
 - **SessionStart hook** (`hooks/session-start.py`): launched through uv and uses only Python's standard library for its bounded health check.
 - **Setup helper** (`scripts/setup-claude-desktop.py`): launched through uv, OS-detects the right `claude_desktop_config.json` path, and performs an atomic merge with backup.
 
@@ -55,6 +55,14 @@ Microsoft Store install vs standalone `.exe` install of Claude Desktop on Window
 
   If neither is present, the wrapper exits with a clear error pointing at both options.
 - **uv** — required for the wrapper, hook, and setup helper. It uses an existing Python 3 runtime or installs a managed one consistently across macOS, Windows, and Linux.
+
+### How the wrapper finds `rka`
+
+1. `binary_path` from `integration.json`, when that file exists. The launcher that writes it owns it, so the wrapper does not probe it.
+2. Otherwise, candidates in this order: the uv-tool install (`~/.local/bin/rka`, or `%USERPROFILE%\.local\bin\rka.exe` on Windows), then each `PATH` entry in order, with entries under `VIRTUAL_ENV` moved last.
+3. The wrapper probes each candidate before use. The file must be executable, its shebang interpreter must exist (POSIX), and `rka --version` must exit 0 within 5 seconds. The wrapper reports a rejected candidate on stderr as `NOTICE: skipped rka candidate <path> (<origin>): <reason>`. Claude Code captures stderr in its MCP log. When there was more than one candidate, or the pick comes from `VIRTUAL_ENV`, the wrapper also reports the chosen path and the candidates it did not try.
+
+Claude Code starts the MCP server in the session's project directory. The manifest's `--isolated` flag stops `uv run` from putting that directory's `.venv` on `PATH`. The candidate order above still applies when a launcher omits the flag.
 
 ---
 

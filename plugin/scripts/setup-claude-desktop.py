@@ -97,7 +97,7 @@ def mcp_entry(wrapper_path: Path) -> dict[str, object]:
     """Build the same cross-platform launcher shape used by the plugin."""
     return {
         "command": uv_command_for_mcp_config(),
-        "args": ["run", "--no-project", str(wrapper_path)],
+        "args": ["run", "--no-project", "--isolated", str(wrapper_path)],
     }
 
 

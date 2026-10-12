@@ -2,7 +2,7 @@
   "mcpServers": {
     "rka": {
       "command": "uv",
-      "args": ["run", "--no-project", "${CLAUDE_PLUGIN_ROOT}/bin/rka-mcp-bridge.py"]
+      "args": ["run", "--no-project", "--isolated", "${CLAUDE_PLUGIN_ROOT}/bin/rka-mcp-bridge.py"]
     }
   }
 }

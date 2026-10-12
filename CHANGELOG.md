@@ -37,6 +37,19 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- The Claude Code plugin launches its MCP bridge with `uv run --no-project
+  --isolated`. Claude Code starts MCP servers in the session's project
+  directory. Without `--isolated`, uv adopted a `.venv` found there, put it
+  first on `PATH` and exported `VIRTUAL_ENV`, so the wrapper ran that
+  venv's `rka` instead of the uv-tool install. A stale script failed with
+  `[Errno 2] No such file or directory` and `Connection closed` in the MCP
+  log. A healthy worktree venv silently ran a different build. The wrapper's
+  PATH fallback now prefers `~/.local/bin/rka`, tries entries under
+  `VIRTUAL_ENV` last, probes each candidate (shebang interpreter present,
+  `--version` exits 0 within 5 seconds) and names every rejected candidate
+  in a stderr `NOTICE`. `integration.json` precedence and the Windows launch
+  path are unchanged. The Claude Desktop setup helper writes the same flag.
+  Resolution order is documented in `plugin/README.md` and INSTALL.md §9.
 - A terminal backfill failure no longer necessarily disables valid semantic
   retrieval. Migration 060 adds a distinct `partial` state, admitted only after
   bounded, transactional space/schema/pairing/source-hash verification. Failed
