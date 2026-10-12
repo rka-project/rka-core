@@ -37,6 +37,13 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- `INSTALL.md` §8.2 now documents the Dockerless backend path next to Docker:
+  `rka start-all` / `rka stop-all`, the `~/.rka` data directory and
+  `RKA_DATA_DIR`, the `embeddings` extra, and the limits that path has today
+  (no bundled dashboard, extension-capable Python required for semantic
+  search, no automatic restart after reboot). The commands already existed;
+  only the manual-install guide omitted them. Regression check in
+  `tests/test_infra/test_installation_docs.py`.
 - The Claude Code plugin launches its MCP bridge with `uv run --no-project
   --isolated`. Claude Code starts MCP servers in the session's project
   directory. Without `--isolated`, uv adopted a `.venv` found there, put it

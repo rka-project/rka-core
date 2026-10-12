@@ -62,6 +62,17 @@ def test_active_install_guide_has_current_integration_and_codex_contracts():
     assert "older Codex CLI builds do not provide `mcp add`" in active
 
 
+def test_manual_install_documents_the_dockerless_start_path():
+    active = _read("INSTALL.md").split("## 11.", maxsplit=1)[0]
+
+    assert "rka start-all" in active
+    assert "rka stop-all" in active
+    assert 'uv tool install --force --reinstall ".[embeddings]"' in active
+    assert "RKA_DATA_DIR" in active
+    assert "web/dist" in active
+    assert "vec_available: false" in active
+
+
 def test_plugin_helper_and_embedding_docs_match_the_live_contract():
     helper = _read("plugin/scripts/setup-claude-desktop.py")
     embedding = _read("docs/embedding_backends.md")
