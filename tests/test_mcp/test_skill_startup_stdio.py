@@ -29,7 +29,7 @@ async def test_cold_client_reads_skills_without_dynamic_registration(tmp_path):
         cwd=str(tmp_path),
         env=env,
     )
-    with (tmp_path / "mcp.stderr").open("w") as err:
+    with (tmp_path / "mcp.stderr").open("w", encoding="utf-8") as err:
         async with stdio_client(params, errlog=err) as (read, write), ClientSession(
             read, write, read_timeout_seconds=timedelta(seconds=20)
         ) as session:
@@ -67,7 +67,7 @@ async def test_cold_client_reads_skills_without_dynamic_registration(tmp_path):
                 result = await session.call_tool("rka_read_skill", args)
                 assert not result.isError
                 expected = (root / "rka/skills" / name / (reference or "SKILL.md"))
-                assert result.content[0].text.endswith(expected.read_text())
+                assert result.content[0].text.endswith(expected.read_text(encoding="utf-8"))
 
             # An old caller's unnecessary load remains an idempotent no-op.
             repeat = await session.call_tool("rka_load_tools", {"names": sorted(added)})
