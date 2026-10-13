@@ -312,12 +312,31 @@ async def _probe_mcp(
                 "rka_describe",
                 "rka_load_tools",
                 "rka_help",
+                "rka_list_skills",
+                "rka_read_skill",
             }
             missing = required - names
             if missing:
                 raise RuntimeError(
                     f"MCP startup omitted required tools: {sorted(missing)}"
                 )
+
+            # Exercise packaged guidance before any dynamic registration. This
+            # also checks the installed wheel, not only source-checkout tests.
+            inventory = await session.call_tool("rka_list_skills", {})
+            if inventory.isError:
+                raise RuntimeError(f"MCP skill inventory failed: {inventory.content}")
+            skills = json.loads("\n".join(
+                block.text for block in inventory.content if hasattr(block, "text")
+            ))
+            if "executor" not in {item["name"] for item in skills.get("skills", [])}:
+                raise RuntimeError("MCP skill inventory omitted the Executor guide")
+            guide = await session.call_tool("rka_read_skill", {"name": "executor"})
+            guide_text = "\n".join(
+                block.text for block in guide.content if hasattr(block, "text")
+            )
+            if guide.isError or "# Executor Skill" not in guide_text:
+                raise RuntimeError("MCP startup could not read the packaged Executor guide")
 
             result = await session.call_tool(
                 "rka_query",
@@ -398,6 +417,8 @@ def main() -> None:
                 # Avoid a model download while still proving sqlite-vec loads.
                 "RKA_EMBEDDINGS_ENABLED": "false",
                 "RKA_API_URL": base_url,
+                "RKA_LEGACY_TOOLS": "0",
+                "RKA_SKILL_TOOLS": "0",
                 "PYTHONUNBUFFERED": "1",
             }
         )

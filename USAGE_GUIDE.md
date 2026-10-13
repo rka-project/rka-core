@@ -2,7 +2,7 @@
 
 This guide walks PIs (researchers) through the full setup and research workflow, from a fresh laptop to producing research outputs with Brain (strategy) and Executor (implementation) actors.
 
-> **Tool surface (v2.7.0+).** The rka MCP server ships a **discriminated-union dispatch architecture** — 5 always-on tools at startup:
+> **Tool surface.** The rka MCP server ships a **discriminated-union dispatch architecture** plus two package-only skill reads — 7 always-on tools at startup:
 >
 > | Tool | Purpose |
 > |---|---|
@@ -11,6 +11,8 @@ This guide walks PIs (researchers) through the full setup and research workflow,
 > | `rka_describe` | Introspect operation schemas. `rka_describe("")` returns the operation index (<250 tokens); `rka_describe("record_decision")` returns the full typed schema with required fields, enums, and provenance constraints. |
 > | `rka_load_tools` | Escape hatch — surface deferred legacy tools (the v2.6.x 91-tool surface and the v2.7.0a2 verb surface live at `tier=deferred`). |
 > | `rka_help` | Escape hatch — list available operations or describe a single one (alias for `rka_describe`). |
+> | `rka_list_skills` | List packaged role guides; available at startup without dynamic loading. |
+> | `rka_read_skill` | Read a packaged guide or reference directly; no backend request or project hook. |
 >
 > **Call shape.** The real dispatch tools take a single `args` object — e.g. `rka_query(args={"operation": "status", "project_id": "prj_…"})`. The worked examples below elide the `args={…}` wrapper for readability (`rka_query(operation="status", …)`); what matters is that the operation name and parameter names are correct.
 >

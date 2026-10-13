@@ -65,7 +65,8 @@ not apply a marker expression:
 
 The deterministic smoke script uses a temporary database and ephemeral port;
 it does not touch a live RKA volume or process. It verifies migrations,
-sqlite-vec, REST health, the five-tool MCP stdio surface, one worker pass, and,
+sqlite-vec, REST health, the seven-tool MCP stdio surface (including direct
+packaged skill reads), one worker pass, and,
 when requested, the built dashboard:
 
 ```bash
