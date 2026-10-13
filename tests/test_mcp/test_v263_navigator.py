@@ -11,11 +11,9 @@ and the registration path is identical to what `mcp.tool()` would have
 produced at import (so no schema asymmetry between always-on and
 on-demand tools).
 
-Cross-client compatibility note: the MCP `notifications/tools/list_changed`
-mechanism is honored by both Claude Desktop and Claude Code (including
-its plugin mode). We exercise the spec contract here at the FastMCP
-session-shim layer; the wire-protocol layer is exercised by FastMCP's
-own conformance tests.
+These tests cover server/session-shim behavior, not client-visible discovery.
+Some clients do not propagate list_changed to the model's catalog. The two
+package-only skill reads are therefore published on the initial tools/list.
 """
 
 from __future__ import annotations
@@ -108,11 +106,11 @@ def test_always_on_tier_membership():
     """The always-on layer (under RKA_LEGACY_TOOLS=1) is the documented
     Minimal Session Start + universal retrieval + most-frequent writes
     + 3 navigator tools + 8 v2.7.0a2 intent verbs + 2 v2.7.0a3
-    dispatch tools = 22 total.
+    dispatch tools + 2 package-only skill reads = 24 total.
 
     The conftest in this directory sets RKA_LEGACY_TOOLS=1 so this
     test exercises the legacy-enabled mode. The v2.7.0a3 default
-    mode (env unset) collapses to 5 always-on tools and is tested
+    mode (env unset) collapses to 7 always-on tools and is tested
     separately in test_v270a3_dispatch_surface.py.
 
     This is the load-bearing list — if a tool moves between tiers it
@@ -147,6 +145,8 @@ def test_always_on_tier_membership():
         # v2.7.0a3 — 2 new dispatch tools (rka_query already counted above)
         "rka_execute",
         "rka_describe",
+        "rka_list_skills",
+        "rka_read_skill",
     }
     actual_always_on = {
         n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
@@ -173,7 +173,7 @@ def test_deferred_tier_size_within_cap():
     deferred = [
         n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_DEFERRED
     ]
-    assert len(always_on) == 22
+    assert len(always_on) == 24
     assert len(deferred) >= 79  # 79 original deferred tools; never < this
     assert set(always_on).isdisjoint(set(deferred))
 
@@ -279,7 +279,7 @@ async def test_list_tools_tier_filter():
     for cat, tools in result["categories"].items():
         for t in tools:
             assert t["tier"] == "always_on"
-    assert len(flat) == 22  # always-on layer (RKA_LEGACY_TOOLS=1): 12 legacy baseline + 8 v2.7.0a2 verbs + 2 v2.7.0a3 dispatch tools
+    assert len(flat) == 24  # legacy surface plus two package-only reads
 
 
 @pytest.mark.asyncio

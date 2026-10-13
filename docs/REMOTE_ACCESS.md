@@ -10,7 +10,10 @@ is deferred pending separate authorization and isolation acceptance.
 - Docker may listen on `0.0.0.0` **inside** its container, with host publishing
   restricted to `127.0.0.1:9712:9712` as in the shipped Compose file.
 - MCP: `rka mcp`, using STDIO and the local REST backend. No MCP TCP port is
-  needed. The normal five-tool dispatch surface is unchanged.
+  needed. The default seven-tool surface includes two package-only skill
+  reads (`rka_list_skills`, `rka_read_skill`) at startup. Their read-only
+  annotations are hints, not authorization; write and transport boundaries
+  remain unchanged.
 - Host and server file access still require separate operator-owned allowroots.
   See [file access](FILE_ACCESS.md).
 

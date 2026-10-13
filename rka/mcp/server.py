@@ -21,6 +21,7 @@ from rka.mcp.local_transport import LocalOnlyFastMCP
 from rka.mcp.embedding_status import embedding_summary, embedding_warning
 from pydantic import Field
 import httpx
+from mcp.types import ToolAnnotations
 
 from rka import __version__
 from rka.models.mission import MissionTask
@@ -235,14 +236,16 @@ def _live_prompt_banner(role: str) -> str:
         "\n---\n\n"
     )
 
-# ChatGPT connector deployments: RKA_SKILL_TOOLS=1 promotes the three skill
-# adapter tools (rka_list_skills / rka_read_skill / rka_start_session) to
-# always_on. ChatGPT custom connectors are tool-oriented and never call
-# rka_load_tools spontaneously, so deferred tools are invisible to them.
-# Local stdio clients (Claude Code / Claude Desktop / Codex) leave the flag
-# unset and keep the default 5-tool dispatch surface unchanged. Like
-# RKA_LEGACY_TOOLS, the flag is read at module import time.
+# The two package-only skill reads are always published at startup. Some
+# clients retain their initial tool inventory after a list_changed notice.
+# RKA_SKILL_TOOLS=1 retains the historical opt-in for rka_start_session;
+# it does not affect the two startup reads or grant remote/write access.
+# Like RKA_LEGACY_TOOLS, this compatibility flag is read at import time.
 _SKILL_TOOLS_ALWAYS_ON = os.environ.get("RKA_SKILL_TOOLS", "0") == "1"
+_STARTUP_SKILL_READS = frozenset({"rka_list_skills", "rka_read_skill"})
+_SKILL_READ_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+)
 
 RKA_INSTRUCTIONS = """\
 Research Knowledge Agent (RKA) is a structured research knowledge base shared by the
@@ -257,8 +260,8 @@ Detailed operating guidance is available via MCP prompts:
 Use these prompts to load role-specific guidance at session start.
 
 ## Tool Surface (v2.7.0+) — Typed Dispatch Architecture
-RKA ships 5 always-on tools: 3 typed dispatch tools plus 2 escape hatches into
-the legacy surface.
+RKA ships 7 always-on tools: 3 typed dispatch tools, 2 escape hatches into
+the legacy surface, and 2 package-only skill reads.
 
 `rka_describe("")` returns the live default operation index and reports how
 many preview operations it withheld. Preview operations remain callable; they
@@ -280,6 +283,11 @@ actually in use.
   - `rka_load_tools(names=[...])` — register legacy v2.6.x tool names into
     the live tool surface. Useful only for back-compat with old transcripts.
   - `rka_help(name=...)` — deprecated alias for `rka_describe`.
+- **Packaged skills (always-on, read-only):**
+  - `rka_list_skills()` — list the packaged role guides.
+  - `rka_read_skill(name, reference=None)` — read a packaged guide or reference.
+    No rka_load_tools call is needed for these reads. They do not query project
+    data, fire project hooks, or change write permissions.
 
 The operations use typed Pydantic models with per-branch enum constraints and
 required-field enforcement at the FastMCP schema layer — illegal values
@@ -330,8 +338,8 @@ since v2.6.
 if _SKILL_TOOLS_ALWAYS_ON:
     RKA_INSTRUCTIONS += """\
 
-## Skill Tools (ChatGPT connector mode — RKA_SKILL_TOOLS=1)
-Role skill guides are exposed as always-on tools in this deployment. At the
+## Session Checklist Helper (compatibility mode — RKA_SKILL_TOOLS=1)
+The optional session helper is also exposed at startup in this deployment. At the
 START of every session, call:
 - `rka_start_session(role="pi" | "brain" | "executor", project_id=None)` —
   returns the selected role's full skill guide plus a session checklist.
@@ -445,12 +453,12 @@ def _record_entity(entity_type: str, entity_id: str, summary: str) -> None:
 #     handed to mcp._tool_manager until the LLM (or PI) calls
 #     `rka_load_tools(names=[...])`. After registration the navigator
 #     fires `notifications/tools/list_changed` (MCP-protocol-level) so
-#     both Claude Desktop AND Claude Code (incl. plugin mode) refresh
-#     their surface and the new tools become callable.
+#     clients that refresh their tool inventory can expose the new tools.
 #
 # Cross-client compatibility:
-#   - The notification mechanism is part of the base MCP protocol; both
-#     Claude Desktop and Claude Code honor it.
+#   - The notification is part of MCP, but receipt/refetch does not guarantee
+#     that every client propagates the new tool to its model-visible catalog.
+#     Publish the two package-only skill reads at startup for compatibility.
 #   - In Claude Code plugin mode the rka MCP appears under the
 #     `mcp__plugin_rka_rka__` namespace; the navigator's `names` argument
 #     takes the UNPREFIXED canonical form (e.g. `rka_add_literature`).
@@ -469,8 +477,8 @@ def _record_entity(entity_type: str, entity_id: str, summary: str) -> None:
 _TIER_ALWAYS_ON = "always_on"
 _TIER_DEFERRED = "deferred"
 
-# Effective tier for the ChatGPT skill adapter tools — always_on only when
-# RKA_SKILL_TOOLS=1 (see flag definition above RKA_INSTRUCTIONS).
+# Effective tier for the optional session helper. Pure skill reads do not
+# depend on this flag; they are explicitly exempted from legacy demotion.
 _SKILL_TOOL_TIER = _TIER_ALWAYS_ON if _SKILL_TOOLS_ALWAYS_ON else _TIER_DEFERRED
 
 
@@ -540,6 +548,7 @@ def tool(
     tier: str = _TIER_DEFERRED,
     category: str = "general",
     always_load: bool | None = None,
+    annotations: ToolAnnotations | None = None,
 ):
     """Register an MCP tool and increment session state on every invocation.
 
@@ -584,9 +593,10 @@ def tool(
             return declared_tier
         if fn_name in _DEMOTED_NAVIGATORS:
             return _TIER_DEFERRED
+        if fn_name in _STARTUP_SKILL_READS:
+            return declared_tier
         if category == "skills" and _SKILL_TOOLS_ALWAYS_ON:
-            # ChatGPT connector mode — skill adapters declared always_on
-            # via _SKILL_TOOL_TIER are exempt from legacy demotion.
+            # Compatibility mode keeps the optional session helper active.
             return declared_tier
         if category not in _NON_LEGACY_CATEGORIES:
             return _TIER_DEFERRED
@@ -638,6 +648,7 @@ def tool(
             "docstring": (func.__doc__ or "").strip(),
             "registered": False,
             "always_load": bool(nonlocal_always_load),
+            "annotations": annotations,
         }
         if effective_tier == _TIER_ALWAYS_ON:
             # v2.7.0a2 — pin always-on tools into Claude Code's per-turn
@@ -646,9 +657,9 @@ def tool(
                 {"anthropic/alwaysLoad": True} if nonlocal_always_load else None
             )
             if meta is not None:
-                registered = mcp.tool(meta=meta)(wrapper)
+                registered = mcp.tool(meta=meta, annotations=annotations)(wrapper)
             else:
-                registered = mcp.tool()(wrapper)
+                registered = mcp.tool(annotations=annotations)(wrapper)
             _TOOL_REGISTRY[name]["registered"] = True
             return registered
         # Deferred — return the wrapped fn so module-level references still
@@ -7508,12 +7519,13 @@ from mcp.server.fastmcp import Context as _MCPContext
 async def rka_load_tools(names: list[str], ctx: _MCPContext) -> str:
     """Activate deferred RKA tools by name (dynamic tool surface, v2.7.0+).
 
-    RKA's MCP server publishes 5 always-on tools at session start (3
+    RKA's MCP server publishes 7 always-on tools at session start (3
     dispatch — rka_query + rka_execute + rka_describe — and 2 escape
-    hatches — rka_load_tools + rka_help). 91 legacy tools + 8 v2.7.0a2
+    hatches — rka_load_tools + rka_help — plus the 2 package-only skill reads).
+    The legacy tools and v2.7.0a2
     verbs are tier='deferred', callable via rka_load_tools(names=[...]).
-    Setting RKA_LEGACY_TOOLS=1 in env restores the v2.7.0a2 surface
-    (20 always-on tools) for callers that depend on per-tool dispatch
+    Setting RKA_LEGACY_TOOLS=1 in env restores the legacy surface
+    (22 existing tools plus the 2 package-only reads) for per-tool dispatch
     granularity (e.g. orchestrator subprocesses). Call this navigator
     to bring deferred tools into the active surface, then call them
     normally.
@@ -7526,10 +7538,10 @@ async def rka_load_tools(names: list[str], ctx: _MCPContext) -> str:
     Behavior:
       - Already-active tools are skipped (idempotent).
       - Unknown names are returned in `unknown` with no error.
-      - On success, the server emits `notifications/tools/list_changed`
-        which both Claude Desktop and Claude Code honor; their tool
-        surfaces refresh within ~1 round-trip and the newly-loaded tools
-        become callable.
+      - On success, the server emits `notifications/tools/list_changed`.
+        Exposure of the new tool depends on the client's inventory refresh
+        behavior; some clients keep a startup snapshot. Packaged skill reads
+        are already visible at startup and do not need this escape hatch.
 
     Args:
         names: list of canonical rka_* tool names to load.
@@ -7558,12 +7570,12 @@ async def rka_load_tools(names: list[str], ctx: _MCPContext) -> str:
         # preserved the inner function's signature + annotations, so
         # the resulting inputSchema matches what an always-on tool of
         # the same shape would have rendered.
-        mcp._tool_manager.add_tool(rec["fn"], name=name)
+        mcp._tool_manager.add_tool(rec["fn"], name=name, annotations=rec["annotations"])
         rec["registered"] = True
         loaded.append(name)
     # Fire the MCP-protocol-level notification iff anything actually
     # changed. The MCP spec says clients SHOULD refetch tools/list on
-    # receipt; both Claude Desktop and Claude Code do.
+    # receipt; model-visible catalog refresh is client-dependent.
     if loaded:
         try:
             await ctx.session.send_tool_list_changed()
@@ -9264,16 +9276,15 @@ async def rka_describe(operation: str = "", include_preview: bool = False) -> st
 
 
 # ============================================================
-# ChatGPT connector skill adapters
+# Packaged skill adapters
 # ============================================================
-# Some MCP clients (Claude Desktop / Claude Code) expose MCP prompts directly,
-# so they can call brain_skill / executor_skill / pi_skill from the prompt
-# picker. ChatGPT custom connectors are primarily tool-oriented, so these
-# deferred tools expose the same packaged skill files through normal tool calls
-# without changing the default five-tool dispatch surface.
+# These two unscoped tools read only packaged assets. Publish them at startup
+# so clients with a fixed tool catalog can load role guidance without dynamic
+# registration. The optional session helper retains its compatibility flag;
+# unlike these pure reads, its project_id can enter the session hook path.
 
 
-@tool(tier=_SKILL_TOOL_TIER, category="skills")
+@tool(tier=_TIER_ALWAYS_ON, category="skills", annotations=_SKILL_READ_ANNOTATIONS)
 async def rka_list_skills() -> str:
     """List packaged RKA skill guides available through the MCP connector.
 
@@ -9303,7 +9314,7 @@ async def rka_list_skills() -> str:
     return json.dumps({"skills": skills}, indent=2)
 
 
-@tool(tier=_SKILL_TOOL_TIER, category="skills")
+@tool(tier=_TIER_ALWAYS_ON, category="skills", annotations=_SKILL_READ_ANNOTATIONS)
 async def rka_read_skill(
     name: SkillNameLiteral,
     reference: str | None = None,
@@ -9311,8 +9322,9 @@ async def rka_read_skill(
     """Read a packaged RKA skill guide or one of its referenced files.
 
     This is the tool-oriented equivalent of the MCP prompt entries
-    `brain_skill`, `executor_skill`, and `pi_skill`, intended for clients
-    such as ChatGPT connectors that do not expose MCP prompts prominently.
+    `brain_skill`, `executor_skill`, and `pi_skill`. It is visible on the
+    initial tools/list, without rka_load_tools or a client refresh. It only
+    reads packaged files; no project data, hooks, or external services.
 
     Args:
         name: Skill package to read: brain, executor, pi, or mcp-credentials.

@@ -37,6 +37,13 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- Local MCP clients receive the two package-only read tools `rka_list_skills`
+  and `rka_read_skill` on the initial tool list, without dynamic discovery.
+  The default surface is seven tools; write dispatch, deferred write tools,
+  project scoping and remote-access boundaries are unchanged. These two tools
+  carry explicit read-only annotations and do not contact the backend or fire
+  project hooks. `RKA_SKILL_TOOLS=1` retains the optional session helper;
+  client handling of later `tools/list_changed` notifications is not assumed.
 - `INSTALL.md` §8.2 now documents the Dockerless backend path next to Docker:
   `rka start-all` / `rka stop-all`, the `~/.rka` data directory and
   `RKA_DATA_DIR`, the `embeddings` extra, and the limits that path has today

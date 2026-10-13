@@ -24,7 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-# Keep the default five-tool transport deterministic even when a developer has
+# Keep the default seven-tool transport deterministic even when a developer has
 # enabled optional local tool surfaces in their shell.
 os.environ["RKA_LEGACY_TOOLS"] = "0"
 os.environ["RKA_SKILL_TOOLS"] = "0"

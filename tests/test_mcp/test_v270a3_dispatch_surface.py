@@ -98,13 +98,15 @@ def test_default_surface_collapses_legacy_tools_to_deferred() -> None:
         n for n, r in server._TOOL_REGISTRY.items()
         if r["tier"] == server._TIER_ALWAYS_ON
     )
-    # Decision 4 + Decision 5 — the 5-tool default always-on layer.
+    # Decision 4 + Decision 5, plus two startup package-only reads.
     expected = {
         "rka_query",
         "rka_execute",
         "rka_describe",
         "rka_load_tools",  # Decision 5 — escape hatch
         "rka_help",        # Decision 5 — deprecated alias for rka_describe
+        "rka_list_skills",
+        "rka_read_skill",
     }
     assert set(always_on) == expected, (
         f"v2.7.0a3 default always-on surface drift: got {always_on}; "
@@ -112,18 +114,18 @@ def test_default_surface_collapses_legacy_tools_to_deferred() -> None:
     )
 
 
-def test_default_surface_count_is_five() -> None:
-    """The default always-on count is exactly 5 (3 dispatch + 2
-    navigator). Well below the Cloudflare ~30-50 quality knee and
+def test_default_surface_count_is_seven() -> None:
+    """The default always-on count is exactly 7 (3 dispatch + 2
+    navigator + 2 package-only reads). Well below the ~30-50 quality knee and
     dramatically below the v2.7.0a2 baseline of 20."""
     server = _reimport_server("0")
     always_on = [
         n for n, r in server._TOOL_REGISTRY.items()
         if r["tier"] == server._TIER_ALWAYS_ON
     ]
-    assert len(always_on) == 5, (
+    assert len(always_on) == 7, (
         f"v2.7.0a3 default always-on count = {len(always_on)}, "
-        f"expected 5: {sorted(always_on)}"
+        f"expected 7: {sorted(always_on)}"
     )
 
 
@@ -186,8 +188,8 @@ def test_v270a2_verbs_demoted_in_default_mode() -> None:
 
 def test_legacy_env_flag_restores_v2_7_0a2_surface() -> None:
     """Set RKA_LEGACY_TOOLS=1 and reimport: the always-on surface
-    grows back to 22 tools (the v2.7.0a2 baseline of 20 + the 2 new
-    v2.7.0a3 dispatch tools rka_execute + rka_describe). This is the
+    grows back to 24 tools (the historical 22 plus two package-only
+    skill reads). This is the
     power-user / migration escape hatch from Decision 4.
     """
     server = _reimport_server("1")
@@ -195,10 +197,9 @@ def test_legacy_env_flag_restores_v2_7_0a2_surface() -> None:
         n for n, r in server._TOOL_REGISTRY.items()
         if r["tier"] == server._TIER_ALWAYS_ON
     )
-    assert len(always_on) == 22, (
+    assert len(always_on) == 24, (
         f"RKA_LEGACY_TOOLS=1 always-on count = {len(always_on)}; "
-        f"expected 22 (v2.7.0a2 baseline of 20 + rka_execute + "
-        f"rka_describe): {always_on}"
+        f"expected 24 (legacy baseline plus 2 package-only reads): {always_on}"
     )
     # rka_get_status (legacy minimal-session-start tool) is back.
     assert "rka_get_status" in always_on

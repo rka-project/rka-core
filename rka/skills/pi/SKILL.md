@@ -22,6 +22,12 @@ The rka MCP server ships a **discriminated-union dispatch surface**. Its core to
 | `rka_describe(operation)` | Authoritative schema lookup + worked example; `rka_describe('')` returns the compact operation index |
 | `rka_load_tools(names)` | Escape hatch for explicit legacy-tool access |
 | `rka_help(name)` | Deprecated alias for `rka_describe` |
+| `rka_list_skills()` | Read the packaged skill inventory (available at startup) |
+| `rka_read_skill(name, reference=None)` | Read packaged guidance directly; no backend request or project hook |
+
+These two skill reads do not require `rka_load_tools`. Other deferred tools
+depend on client support for dynamic inventory refresh; write permissions
+and the typed read/write dispatch are unchanged.
 
 `args` is a **typed Pydantic model** discriminated by `operation`. The live models render as `inputSchema.oneOf` with per-branch enum + required-field constraints, so invalid enum values and missing required fields are rejected before dispatch. Do not rely on a documented operation count; inspect the live index and describe unfamiliar operations.
 

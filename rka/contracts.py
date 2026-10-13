@@ -88,7 +88,8 @@ AGENTIC_MCP_OPERATIONS: frozenset[str] = frozenset(
 CORE_LEGACY_MCP_OPERATIONS: frozenset[str] = frozenset({"reset_session"})
 
 
-# The public transport is five tools by default.  Typed-operation ownership is
+# The public transport is seven tools by default (including two package-only
+# skill reads). Typed-operation ownership is
 # classified separately because rka_query/rka_execute multiplex many branches.
 MCP_TRANSPORT_TOOLS: tuple[str, ...] = (
     "rka_load_tools",
@@ -96,6 +97,8 @@ MCP_TRANSPORT_TOOLS: tuple[str, ...] = (
     "rka_query",
     "rka_describe",
     "rka_execute",
+    "rka_list_skills",
+    "rka_read_skill",
 )
 
 
