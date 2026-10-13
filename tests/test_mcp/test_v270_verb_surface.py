@@ -141,25 +141,25 @@ def test_exactly_eight_verbs_under_verb_category() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Always-on count — verbs + legacy 12 = 20
+# Always-on count — legacy-enabled surface plus startup skill reads
 # ---------------------------------------------------------------------------
 
 
-def test_always_on_count_is_twenty() -> None:
+def test_legacy_always_on_count_includes_startup_skill_reads() -> None:
     """The PR-1 + v2.7.0a3 always-on tier (under RKA_LEGACY_TOOLS=1)
     is 12 legacy + 8 verbs + 2 v2.7.0a3 dispatch tools
-    (rka_execute + rka_describe) = 22. The conftest sets the env var
+    (rka_execute + rka_describe) + 2 package-only reads = 24. The conftest sets the env var
     so this counts the LEGACY-ENABLED mode. v2.7.0a3 default mode
-    (env unset) collapses to 5 tools and is tested separately in
+    (env unset) collapses to 7 tools and is tested separately in
     test_v270a3_dispatch_surface.py.
     """
     always_on = sorted(
         n for n, r in _TOOL_REGISTRY.items()
         if r["tier"] == _TIER_ALWAYS_ON
     )
-    assert len(always_on) == 22, (
+    assert len(always_on) == 24, (
         f"always-on tier count = {len(always_on)} "
-        f"(expected 12 legacy + 8 verbs + 2 v2.7.0a3 dispatch = 22). "
+        f"(expected legacy 22 + 2 package-only skill reads = 24). "
         f"Members: {always_on}"
     )
 
@@ -170,7 +170,9 @@ def test_always_on_membership_exact() -> None:
     the 2 v2.7.0a3 dispatch tools (rka_execute + rka_describe). Any
     drift here means a tool was silently moved between tiers."""
     v270a3_dispatch = {"rka_execute", "rka_describe"}
-    expected = set(LEGACY_ALWAYS_ON) | set(V270_VERBS) | v270a3_dispatch
+    expected = set(LEGACY_ALWAYS_ON) | set(V270_VERBS) | v270a3_dispatch | {
+        "rka_list_skills", "rka_read_skill"
+    }
     actual = {
         n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
     }

@@ -14,6 +14,8 @@ import subprocess
 import sys
 from typing import get_args
 
+import pytest
+
 import rka.mcp.server as server
 
 _SURFACE_SNIPPET = (
@@ -26,6 +28,7 @@ _SURFACE_SNIPPET = (
 )
 
 _SKILL_TOOLS = ("rka_list_skills", "rka_read_skill", "rka_start_session")
+_SKILL_READS = {"rka_list_skills", "rka_read_skill"}
 _DISPATCH_SURFACE = {"rka_query", "rka_execute", "rka_describe", "rka_load_tools", "rka_help"}
 
 
@@ -48,20 +51,19 @@ def _surface(**flags: str) -> dict:
     return json.loads(out.stdout)
 
 
-def test_skill_adapter_tools_are_deferred_in_default_mode() -> None:
-    """Keep the local default MCP surface unchanged for existing clients
-    (Claude Code / Claude Desktop / Codex stdio)."""
-    result = _surface()
-    assert set(result["visible"]) == _DISPATCH_SURFACE
-    for name in _SKILL_TOOLS:
-        assert result["tiers"][name] == "deferred"
+@pytest.mark.parametrize("flag", [None, "0", "false"])
+def test_package_skill_reads_are_visible_at_startup(flag: str | None) -> None:
+    """Only two package-only reads are added; the session helper stays deferred."""
+    result = _surface(**({} if flag is None else {"RKA_SKILL_TOOLS": flag}))
+    assert set(result["visible"]) == _DISPATCH_SURFACE | _SKILL_READS
+    for name in _SKILL_READS:
+        assert result["tiers"][name] == "always_on"
+    assert result["tiers"]["rka_start_session"] == "deferred"
     assert result["advertised"] is False
 
 
 def test_skill_adapter_tools_always_on_with_skill_flag() -> None:
-    """RKA_SKILL_TOOLS=1 (ChatGPT connector deployments) promotes the skill
-    adapters to always_on — ChatGPT never calls rka_load_tools spontaneously,
-    so deferred tools are invisible to it."""
+    """The existing compatibility flag additionally exposes the session helper."""
     result = _surface(RKA_SKILL_TOOLS="1")
     visible = set(result["visible"])
     for name in _SKILL_TOOLS:
@@ -72,6 +74,14 @@ def test_skill_adapter_tools_always_on_with_skill_flag() -> None:
     assert len(visible) == 8
     # Server instructions tell ChatGPT to call rka_start_session first.
     assert result["advertised"] is True
+
+
+@pytest.mark.parametrize("flag, count", [("0", 24), ("1", 25)])
+def test_legacy_mode_preserves_skill_helper_opt_in(flag: str, count: int) -> None:
+    result = _surface(RKA_LEGACY_TOOLS="1", RKA_SKILL_TOOLS=flag)
+    assert len(result["visible"]) == count
+    assert _SKILL_READS <= set(result["visible"])
+    assert ("rka_start_session" in result["visible"]) == (flag == "1")
 
 
 async def test_list_skills_returns_packaged_role_guides() -> None:
@@ -96,6 +106,53 @@ async def test_read_skill_returns_markdown_for_pi_role() -> None:
 async def test_read_skill_rejects_path_traversal() -> None:
     payload = json.loads(await server.rka_read_skill("brain", "../pi/SKILL.md"))
     assert payload["error"] == "skill_file_unavailable"
+
+
+async def test_startup_reads_have_readonly_annotations() -> None:
+    descriptors = {t.name: t for t in await server.mcp.list_tools()}
+    for name in _SKILL_READS:
+        t = descriptors[name]
+        assert t.annotations.readOnlyHint is True
+        assert t.annotations.destructiveHint is False
+        assert t.annotations.idempotentHint is True
+        assert t.annotations.openWorldHint is False
+        assert t.meta["anthropic/alwaysLoad"] is True
+
+
+async def test_package_reads_never_contact_api_or_fire_project_hooks(monkeypatch) -> None:
+    def no_client(*args, **kwargs):
+        pytest.fail("packaged skill read attempted an API call")
+
+    monkeypatch.setattr(server, "_client", no_client)
+    before = set(server._session.session_start_fired_for)
+    assert json.loads(await server.rka_list_skills())["skills"]
+    for role in ("brain", "executor", "pi", "mcp-credentials"):
+        assert "# Source: rka/skills/" in await server.rka_read_skill(role)
+    assert "Mission completion" in await server.rka_read_skill(
+        "brain", "templates/stop-pivot-note.md"
+    )
+    assert server._session.session_start_fired_for == before
+
+
+@pytest.mark.parametrize("reference", ["/etc/passwd", "../pi/SKILL.md", "._SKILL.md"])
+async def test_startup_read_rejects_unsafe_references(reference: str) -> None:
+    result = json.loads(await server.rka_read_skill("brain", reference))
+    assert result["error"] == "skill_file_unavailable"
+
+
+async def test_startup_read_rejects_symlink_escape(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "skills"
+    (root / "brain").mkdir(parents=True)
+    outside = tmp_path / "private.txt"
+    outside.write_text("must not be returned")
+    try:
+        (root / "brain" / "outside.md").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+    monkeypatch.setattr(server, "_SKILLS_DIR", root)
+    result = await server.rka_read_skill("brain", "outside.md")
+    assert json.loads(result)["error"] == "skill_file_unavailable"
+    assert "must not be returned" not in result
 
 
 async def test_start_session_includes_checklist() -> None:

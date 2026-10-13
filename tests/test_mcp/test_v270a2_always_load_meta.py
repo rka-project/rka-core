@@ -87,10 +87,10 @@ def test_every_always_on_tool_has_always_load_meta() -> None:
     )
     # Sanity-check the population matches Decision 1's pin under
     # RKA_LEGACY_TOOLS=1 (the conftest default): 12 baseline + 8
-    # v2.7.0a2 verbs + 2 v2.7.0a3 dispatch tools = 22.
-    assert len(always_on_names) == 22, (
-        f"always-on tier count = {len(always_on_names)}, expected 22 "
-        f"(12 legacy baseline + 8 v2.7.0a2 verbs + 2 v2.7.0a3 dispatch). "
+    # v2.7.0a2 verbs + 2 v2.7.0a3 dispatch + 2 package-only reads = 24.
+    assert len(always_on_names) == 24, (
+        f"always-on tier count = {len(always_on_names)}, expected 24 "
+        f"(legacy 22 + 2 package-only skill reads). "
         f"Drift means a tool moved tiers — re-audit alwaysLoad on every "
         f"change."
     )

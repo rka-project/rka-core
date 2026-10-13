@@ -9811,6 +9811,23 @@
         "type": "object"
       }
     },
+    "rka_list_skills": {
+      "input_schema": {
+        "properties": {},
+        "type": "object"
+      },
+      "output_schema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      }
+    },
     "rka_load_tools": {
       "input_schema": {
         "properties": {
@@ -11341,6 +11358,47 @@
         },
         "required": [
           "args"
+        ],
+        "type": "object"
+      },
+      "output_schema": {
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "type": "object"
+      }
+    },
+    "rka_read_skill": {
+      "input_schema": {
+        "properties": {
+          "name": {
+            "enum": [
+              "brain",
+              "executor",
+              "pi",
+              "mcp-credentials"
+            ],
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },

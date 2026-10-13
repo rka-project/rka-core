@@ -49,7 +49,7 @@ installers must not auto-authorize a home directory or infer permission from
 `project_dir`. See [File access](docs/FILE_ACCESS.md) for macOS/Linux, Windows,
 container examples, limits, restart requirements and a synthetic verification.
 
-In Claude Desktop and Claude Code, you'll see **5 always-on `rka` tools** at session start:
+In Codex, Claude Desktop and Claude Code, you'll see **7 always-on `rka` tools** at session start:
 
 | Tool | Role | Operations behind it |
 |---|---|---|
@@ -58,6 +58,15 @@ In Claude Desktop and Claude Code, you'll see **5 always-on `rka` tools** at ses
 | `rka_describe` | Schema lookup + examples for any operation | — |
 | `rka_load_tools` | Escape hatch: register legacy tool aliases for the rest of the session | — |
 | `rka_help` | Alias for `rka_describe` (mnemonic surface) | — |
+| `rka_list_skills` | Read the packaged skill inventory; no backend request | — |
+| `rka_read_skill` | Read a packaged role guide or reference; no backend request | — |
+
+Call these two skill reads directly, without `rka_load_tools`. Some clients
+cache their initial tool list even after a list-change notification. The reads
+only access packaged assets; they do not fire project hooks or grant write
+permissions. `RKA_SKILL_TOOLS=1` still adds the optional `rka_start_session`
+helper (eight tools); it is not required for reading skills or a remote-access
+enablement flag.
 
 The typed Pydantic operations under `rka_query` / `rka_execute` carry per-branch enum and required-field enforcement at the **FastMCP schema layer**, so invalid values are rejected before dispatch. `rka_describe("")` is the authoritative operation index; do not rely on a copied count in documentation. Legacy per-tool aliases are `tier=deferred` and load on demand via `rka_load_tools`; `RKA_LEGACY_TOOLS=1` remains only as a compatibility switch for historical callers.
 
@@ -288,7 +297,7 @@ The plugin's `rka-pi` skill teaches Claude Code how to:
 
 If anything fails at any step, the original config is restored from the backup automatically. No silent overwrites.
 
-**Success signal**: Claude Code prints `✅ Claude Desktop config updated. The RKA MCP server entry is in place at <config_path>.` After Step 5's full quit + reopen, a fresh Claude Desktop chat will list the 5 Core dispatch tools (`rka_query`, `rka_execute`, `rka_describe`, `rka_load_tools`, `rka_help`).
+**Success signal**: Claude Code prints `✅ Claude Desktop config updated. The RKA MCP server entry is in place at <config_path>.` After Step 5's full quit + reopen, a fresh Claude Desktop chat will list the 5 Core dispatch/escape tools (`rka_query`, `rka_execute`, `rka_describe`, `rka_load_tools`, `rka_help`) plus the 2 packaged skill reads (`rka_list_skills`, `rka_read_skill`).
 
 ### Step 4.5 (optional) — Install the standalone Writer plugin
 
@@ -394,7 +403,7 @@ Ask in any new chat:
 
 > What RKA tools do you have access to?
 
-Brain should list **5 always-on tools (3 dispatch + 2 escape hatches)**: `rka_query`, `rka_execute`, `rka_describe`, plus `rka_load_tools` and `rka_help` as navigator escape hatches. This matches the §1.1 surface count exactly. Confirm by asking: *"Call `rka_describe` with an empty string"* — Brain should return the live operation index. Treat that response as authoritative because the operation catalog can grow between releases.
+Brain should list **7 always-on tools (3 dispatch + 2 escape hatches + 2 skill reads)**: `rka_query`, `rka_execute`, `rka_describe`, `rka_load_tools`, `rka_help`, `rka_list_skills`, and `rka_read_skill`. This matches §1.1. Confirm by asking: *"Call `rka_read_skill` for the brain guide, then call `rka_describe` with an empty string"*. Treat the live operation index as authoritative because the operation catalog can grow between releases.
 
 If you instead see a long list of legacy tool names (e.g., `list_projects`, `get_status`, `add_note`, etc. — surfaced as one MCP tool each), your Brain is running with `RKA_LEGACY_TOOLS=1` (orchestrator daemon mode). For the user-facing Claude Desktop session, unset this env var and restart.
 
@@ -499,7 +508,7 @@ When the user asks variants of *"set up RKA"*, *"finish RKA install"*, *"connect
 3. For "uninstall RKA" requests:
    - Run `/plugin uninstall rka@rka` in Claude Code.
    - Restore Claude Desktop's config from the most recent backup.
-   - Optionally: `docker compose down -v` to wipe the backend (warn user this destroys their RKA data — recommend a knowledge-pack export first via the project-scoped REST endpoint `GET /api/projects/export`, or the web dashboard's export control; see [USAGE_GUIDE.md](USAGE_GUIDE.md) for the pack import/export workflow. Note: `export` is not a typed dispatch operation, so it is not directly callable from the default 5-tool surface).
+   - Optionally: `docker compose down -v` to wipe the backend (warn user this destroys their RKA data — recommend a knowledge-pack export first via the project-scoped REST endpoint `GET /api/projects/export`, or the web dashboard's export control; see [USAGE_GUIDE.md](USAGE_GUIDE.md) for the pack import/export workflow. Note: `export` is not a typed dispatch operation, so it is not directly callable from the default 7-tool surface).
 
 ---
 
@@ -605,7 +614,7 @@ Replace the command with the absolute binary path on the current machine: `/User
 
 **v2.7.0 schema enforcement.** In v2.7.0 the args object is a discriminated Pydantic union — missing `project_id` on a scoped operation now surfaces as a `ValidationError` from FastMCP **before** the call reaches the service layer. Per-branch enum + required-field enforcement (defined in `orchestrator/rka_enums.py` mirror + the per-operation Pydantic models) means wrong values (e.g., `confidence='confirmed'`) are also rejected pre-dispatch with a structured error pointing at the offending field. See §1.1 for the user-facing tool surface this enforcement sits behind.
 
-After restart, Brain will see exactly 5 always-on tools (3 dispatch + 2 escape hatches): `rka_query`, `rka_execute`, `rka_describe`, plus `rka_load_tools` and `rka_help` (alias for `rka_describe`). This is normal — the current operation catalog is dispatched through them and can be inspected with `rka_describe("")`.
+After restart, Brain will see seven always-on tools: `rka_query`, `rka_execute`, `rka_describe`, `rka_load_tools`, `rka_help`, `rka_list_skills`, and `rka_read_skill`. Packaged guides are readable immediately; the operation catalog can be inspected with `rka_describe("")`.
 
 Fully quit + reopen Claude Desktop.
 
@@ -647,7 +656,7 @@ codex mcp add rka -- "$env:USERPROFILE\.local\bin\rka.exe" mcp
 
 Run `codex mcp --help` first; older Codex CLI builds do not provide `mcp add`. Editing `config.toml` is the version-independent path.
 
-**Role guides and templates from Codex.** The Brain, Executor and PI guides and the RWF v0 research templates ship inside the `rka` MCP server, so nothing else is installed for Codex. In a Codex session, call `rka_load_tools(["rka_read_skill", "rka_start_session"])` once, then `rka_start_session("executor")` for the role guide or `rka_read_skill("brain", "templates/gap-note.md")` for a template. RKA does not write into Codex's `.agents/skills` folders; the MCP route is the supported one.
+**Role guides and templates from Codex.** The Brain, Executor and PI guides and the RWF v0 research templates ship inside the `rka` MCP server, so nothing else is installed for Codex. Call `rka_list_skills()` and then `rka_read_skill("executor")` for the role guide or `rka_read_skill("brain", "templates/gap-note.md")` for a template. Both reads are available at startup; no `rka_load_tools` call is needed. RKA does not write into Codex's `.agents/skills` folders; the MCP route is the supported one.
 
 ---
 

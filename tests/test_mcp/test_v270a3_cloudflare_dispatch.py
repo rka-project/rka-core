@@ -23,7 +23,7 @@ What's covered:
 - rka_describe response is small (≤2 KB) per Anthropic's per-tool
   truncation guidance.
 - Env-flag round-trip — RKA_LEGACY_TOOLS=1 brings back the v2.7.0a2
-  surface (22 always-on); unsetting goes back to 5.
+  surface (24 always-on, including skill reads); unsetting goes back to 7.
 - Every example in OPERATIONS_SCHEMA matches the operation's declared
   required_fields contract (no example missing a required field, no
   example smuggling an unknown field that the validator would reject).
@@ -639,18 +639,18 @@ def test_legacy_env_flag_round_trip() -> None:
     """Flip RKA_LEGACY_TOOLS=1, reimport, assert the v2.7.0a2 always-on
     surface (12 v2.6.4 baseline + 8 v2.7.0 verbs + 2 navigator at
     always_on + the 2 new v2.7.0a3 dispatch tools) is restored. Then
-    flip back to "0" and assert the 5-tool default is back."""
+    flip back to "0" and assert the 7-tool default is back."""
     legacy = _reimport_server("1")
     legacy_always_on = sorted(
         n for n, r in legacy._TOOL_REGISTRY.items()
         if r["tier"] == legacy._TIER_ALWAYS_ON
     )
     # 12 v2.6.4 baseline + 8 v2.7.0a2 verbs + rka_load_tools + rka_help
-    # + rka_execute + rka_describe = 22 (mirrors the existing test in
+    # + rka_execute + rka_describe + two skill reads = 24 (mirrors the test in
     # test_v270a3_dispatch_surface.py).
-    assert len(legacy_always_on) == 22, (
+    assert len(legacy_always_on) == 24, (
         f"RKA_LEGACY_TOOLS=1 always-on count = {len(legacy_always_on)}; "
-        f"expected 22: {legacy_always_on}"
+        f"expected 24: {legacy_always_on}"
     )
     # v2.7.0a2 verbs are visible in this mode.
     for v in (
@@ -661,15 +661,15 @@ def test_legacy_env_flag_round_trip() -> None:
             f"RKA_LEGACY_TOOLS=1 missing v2.7.0a2 verb {v!r}"
         )
 
-    # Flip back; the default 5-tool surface is back.
+    # Flip back; the default 7-tool surface is back.
     default = _reimport_server("0")
     default_always_on = sorted(
         n for n, r in default._TOOL_REGISTRY.items()
         if r["tier"] == default._TIER_ALWAYS_ON
     )
-    assert len(default_always_on) == 5, (
+    assert len(default_always_on) == 7, (
         f"RKA_LEGACY_TOOLS=0 always-on count = {len(default_always_on)}; "
-        f"expected 5: {default_always_on}"
+        f"expected 7: {default_always_on}"
     )
 
 
