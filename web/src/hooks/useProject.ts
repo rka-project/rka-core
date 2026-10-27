@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/api/client"
-import type { ProjectCreate, ProjectStateUpdate } from "@/api/types"
+import type { ProjectCreate, ProjectInfo, ProjectStateUpdate } from "@/api/types"
 import { useActiveProjectId } from "@/hooks/useProjectSelection"
 
 export function useProjectStatus() {
@@ -30,7 +30,10 @@ export function useCreateProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (data: ProjectCreate) => api.createProject(data),
-    onSuccess: () => {
+    onSuccess: (project) => {
+      qc.setQueryData<ProjectInfo[]>(["projects"], (previous = []) => [
+        ...previous.filter((item) => item.id !== project.id), project,
+      ])
       qc.invalidateQueries({ queryKey: ["projects"] })
     },
   })

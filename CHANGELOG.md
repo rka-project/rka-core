@@ -37,6 +37,11 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- The dashboard requires explicit project selection or creation before scoped
+  reads and writes. Legacy browser selections require one confirmation; missing
+  or deleted selections never silently switch projects. Existing projects and
+  historical migrations remain unchanged.
+
 - Local MCP clients receive the two package-only read tools `rka_list_skills`
   and `rka_read_skill` on the initial tool list, without dynamic discovery.
   The default surface is seven tools; write dispatch, deferred write tools,

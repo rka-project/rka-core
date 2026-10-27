@@ -1,6 +1,6 @@
 import { createContext } from "react"
 
-export const PROJECT_SELECTION_STORAGE_KEY = "rka.activeProjectId"
+export { PROJECT_SELECTION_STORAGE_KEY } from "@/lib/projectSelection"
 
 export type ProjectSelectionValue = {
   projectId: string
