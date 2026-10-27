@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+
+from pydantic import ValidationError
 
 from rka.infra.ids import generate_id
 from rka.models.mission import (
@@ -12,6 +15,8 @@ from rka.models.mission import (
 from rka.models.journal import JournalEntryCreate
 from rka.services.base import BaseService, _now
 from rka.services.jobs import JobQueue
+
+logger = logging.getLogger(__name__)
 
 
 class MissionNotFoundError(ValueError):
@@ -484,13 +489,22 @@ class MissionService(BaseService):
             tasks = [MissionTask(**t) for t in raw]
 
         report = None
-        if row.get("report"):
+        consistency_warnings: list[str] = []
+        if row.get("report") is not None:
             try:
                 report = MissionReport.model_validate_json(row["report"])
-            except Exception:
-                pass
+            except ValidationError:
+                # Report text and validation inputs can contain private research.
+                # Diagnose the affected row without logging or rewriting its body.
+                logger.warning(
+                    "Stored report failed validation for mission %s (project %s)",
+                    row["id"], self.project_id,
+                )
+                consistency_warnings.append(
+                    "report_parse_error: Stored mission report could not be parsed; "
+                    "report is unavailable. Original stored data was not changed."
+                )
 
-        consistency_warnings: list[str] = []
         if row["status"] == "complete" and tasks:
             open_statuses = {"pending", "in_progress", "blocked"}
             open_tasks = [task for task in tasks if task.status in open_statuses]

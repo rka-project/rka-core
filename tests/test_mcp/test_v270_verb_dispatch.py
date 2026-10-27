@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 
 from rka.mcp import verb_dispatch
-from rka.mcp.server import _TOOL_REGISTRY
+import rka.mcp.server as _live_server
 
 
 # ---------------------------------------------------------------------------
@@ -62,12 +62,12 @@ def recorder(monkeypatch) -> _Recorder:
     rec = _Recorder()
     # Snapshot original fns so we can restore (monkeypatch handles cleanup,
     # but we want explicit fakes for each name reached during the test).
-    for name, entry in list(_TOOL_REGISTRY.items()):
+    for name, entry in list(_live_server._TOOL_REGISTRY.items()):
         # We replace the inner 'fn' field of the registry record so the
         # late-bound _legacy(name) lookup inside verb_dispatch returns
         # our fake.
         monkeypatch.setitem(
-            _TOOL_REGISTRY,
+            _live_server._TOOL_REGISTRY,
             name,
             {**entry, "fn": rec.make_fake(name)},
         )
