@@ -155,6 +155,24 @@ repairing real pending records are separate, explicitly authorized workflows.
 
 ## Read diagnostics and pagination
 
+Claim-edge writes reject missing or foreign claim/cluster references with the
+existing scoped validation error contract (422), rather than an unhandled 500.
+MCP cluster creation/assignment preserves its successful text responses. A
+failed membership or follow-up synthesis update instead returns a tool error
+(`isError=true`) containing JSON diagnostics: the cluster ID, whether this call
+created it, acknowledged claim IDs, per-request outcomes and errors, and retry
+guidance. These multi-request workflows are not atomic: an error does not undo
+an acknowledged cluster or edge. Transport failures and server errors may have
+committed; reconcile the reported cluster and memberships before retrying and
+never blindly repeat cluster creation. A transport failure stops later
+membership requests and labels them `not_attempted`.
+
+Mission reads retain corrupt stored report text unchanged, return `report:null`
+with a `report_parse_error` entry in `consistency_warnings`, and log the affected
+mission/project IDs without the private report body. An absent report remains
+distinct from an unreadable stored report. These diagnostics do not authorize
+data repair or imply that a complete mission's report was successfully read.
+
 `GET /api/maintenance` and `pending_maintenance` accept `limit` (1–200,
 default 50) and `offset` (non-negative, default 0). Pagination applies
 independently to each category, with deterministic ordering for an unchanged

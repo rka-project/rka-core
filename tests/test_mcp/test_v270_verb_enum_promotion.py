@@ -31,11 +31,11 @@ from typing import Any
 
 import pytest
 
-from rka.mcp.server import mcp
+import rka.mcp.server as _live_server
 
 
 def _tool(name: str):
-    tools = {t.name: t for t in mcp._tool_manager.list_tools()}
+    tools = {t.name: t for t in _live_server.mcp._tool_manager.list_tools()}
     return tools.get(name)
 
 

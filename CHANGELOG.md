@@ -41,6 +41,13 @@ All notable changes to RKA are documented here. Format loosely follows
   reads and writes. Legacy browser selections require one confirmation; missing
   or deleted selections never silently switch projects. Existing projects and
   historical migrations remain unchanged.
+- Supported Core runtime dependencies receive targeted security updates and
+  fail-closed Python/frontend audit gates. Dependabot covers uv, npm, Actions
+  and Docker. Lockfile validation is source evidence, not a production rollout.
+- Claim-edge scope errors now return explicit validation failures. MCP cluster
+  workflows report partial writes as tool errors with acknowledged IDs and
+  per-request outcomes; corrupt mission reports remain readable with a visible
+  diagnostic instead of silently appearing absent. No stored report is rewritten.
 
 - Local MCP clients receive the two package-only read tools `rka_list_skills`
   and `rka_read_skill` on the initial tool list, without dynamic discovery.

@@ -38,14 +38,8 @@ import inspect
 
 import pytest
 
-from rka.mcp.server import (
-    _TIER_ALWAYS_ON,
-    _TIER_DEFERRED,
-    _TOOL_REGISTRY,
-    mcp,
-    rka_query,
-    rka_record_literature,
-)
+import rka.mcp.server as _live_server
+from rka.mcp.server import (_TIER_ALWAYS_ON, _TIER_DEFERRED, rka_query, rka_record_literature)
 
 
 # ---------------------------------------------------------------------------
@@ -55,14 +49,14 @@ from rka.mcp.server import (
 
 def _list_mcp_tools() -> dict:
     """Synchronous wrapper for the FastMCP tool manager's sync listing."""
-    return {t.name: t for t in mcp._tool_manager.list_tools()}
+    return {t.name: t for t in _live_server.mcp._tool_manager.list_tools()}
 
 
 def _list_mcp_tools_via_async_handler() -> list:
     """Drive the public async ``mcp.list_tools()`` handler that emits the
     wire-protocol tool descriptors. This is the path a real tools/list
     request takes through FastMCP."""
-    return asyncio.run(mcp.list_tools())
+    return asyncio.run(_live_server.mcp.list_tools())
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +76,7 @@ def test_every_always_on_tool_has_always_load_meta() -> None:
     """
     mcp_tools = _list_mcp_tools()
     always_on_names = sorted(
-        n for n, r in _TOOL_REGISTRY.items()
+        n for n, r in _live_server._TOOL_REGISTRY.items()
         if r["tier"] == _TIER_ALWAYS_ON
     )
     # Sanity-check the population matches Decision 1's pin under
@@ -142,7 +136,7 @@ def test_deferred_tools_do_not_have_always_load_meta() -> None:
     infers this from tier when always_load is None).
     """
     deferred_names = sorted(
-        n for n, r in _TOOL_REGISTRY.items()
+        n for n, r in _live_server._TOOL_REGISTRY.items()
         if r["tier"] == _TIER_DEFERRED
     )
     assert deferred_names, (
@@ -152,7 +146,7 @@ def test_deferred_tools_do_not_have_always_load_meta() -> None:
     # Contract 1: registry's always_load field is False for deferred.
     bad_registry: list[tuple[str, object]] = []
     for name in deferred_names:
-        val = _TOOL_REGISTRY[name].get("always_load")
+        val = _live_server._TOOL_REGISTRY[name].get("always_load")
         if val is not False:
             bad_registry.append((name, val))
     assert not bad_registry, (
@@ -199,7 +193,7 @@ def test_always_load_survives_tools_list_response() -> None:
     assert descriptors, "mcp.list_tools() returned empty — server broken?"
 
     always_on_names = {
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
+        n for n, r in _live_server._TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
     }
 
     seen_on_wire: dict[str, dict] = {}
@@ -456,7 +450,7 @@ def test_registry_exposes_always_load_for_audit() -> None:
     """
     mcp_tools = _list_mcp_tools()
     mismatches: list[tuple[str, bool, object]] = []
-    for name, rec in _TOOL_REGISTRY.items():
+    for name, rec in _live_server._TOOL_REGISTRY.items():
         assert "always_load" in rec, (
             f"registry entry {name!r} missing always_load field — "
             f"Decision 1 implementation scope #3 unfulfilled."
