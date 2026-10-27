@@ -3,12 +3,23 @@
  */
 
 const BASE_URL = "/api"
-let activeProjectId =
-  (typeof window !== "undefined" && window.localStorage.getItem("rka.activeProjectId")) ||
-  "proj_default"
+let activeProjectId: string | null = null
+const projectListeners = new Set<() => void>()
 
 export function setApiProjectId(projectId: string | null) {
-  activeProjectId = projectId?.trim() || "proj_default"
+  const next = projectId?.trim() || null
+  if (next === activeProjectId) return
+  activeProjectId = next
+  for (const listener of [...projectListeners]) listener()
+}
+
+export function getApiProjectId(): string | null {
+  return activeProjectId
+}
+
+export function subscribeApiProjectId(listener: () => void): () => void {
+  projectListeners.add(listener)
+  return () => { projectListeners.delete(listener) }
 }
 
 type RequestConfig = {
@@ -36,7 +47,12 @@ function buildHeaders(
     result.set("Content-Type", "application/json")
   }
   if (includeProjectHeader) {
+    if (!activeProjectId) {
+      throw new ApiError(422, "Choose a project before reading or writing project records")
+    }
     result.set("X-RKA-Project", activeProjectId)
+  } else {
+    result.delete("X-RKA-Project")
   }
   return result
 }
@@ -81,8 +97,8 @@ async function request<T>(
 ): Promise<T> {
   const url = `${BASE_URL}${path}`
   const res = await fetch(url, {
-    headers: buildHeaders(options.headers, config),
     ...options,
+    headers: buildHeaders(options.headers, config),
   })
 
   if (!res.ok) {
@@ -93,8 +109,8 @@ async function request<T>(
   return res.json()
 }
 
-function get<T>(path: string): Promise<T> {
-  return request<T>(path)
+function get<T>(path: string, config?: RequestConfig): Promise<T> {
+  return request<T>(path, {}, config)
 }
 
 function post<T>(path: string, body?: unknown, config?: RequestConfig): Promise<T> {
@@ -206,11 +222,11 @@ import type {
 
 export const api = {
   // Health
-  health: () => get<HealthStatus>("/health"),
-  capabilities: () => get<CoreCapabilities>("/capabilities"),
+  health: () => get<HealthStatus>("/health", { includeProjectHeader: false }),
+  capabilities: () => get<CoreCapabilities>("/capabilities", { includeProjectHeader: false }),
 
   // Project
-  listProjects: () => get<ProjectInfo[]>("/projects"),
+  listProjects: () => get<ProjectInfo[]>("/projects", { includeProjectHeader: false }),
   createProject: (data: ProjectCreate) =>
     post<ProjectInfo>("/projects", data, { includeProjectHeader: false }),
   deleteProject: (projectId: string, confirm = false) =>

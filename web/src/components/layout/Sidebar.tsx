@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { NavLink } from "react-router-dom"
 import {
   LayoutDashboard,
@@ -90,13 +90,6 @@ export function Sidebar({
   const canDelete = projectId !== "proj_default" && !!currentProject
   const { data: entityCounts } = useProjectEntityCounts(deleteDialogOpen ? projectId : null)
   const displayProjectId = currentProject?.id ?? projectId
-
-  useEffect(() => {
-    if (!projects?.length) return
-    if (!projects.some((item) => item.id === projectId)) {
-      setProjectId(projects[0].id)
-    }
-  }, [projectId, projects, setProjectId])
 
   const handleCreate = () => {
     if (!name.trim()) return
@@ -319,10 +312,7 @@ export function Sidebar({
                       onSuccess: () => {
                         setDeleteDialogOpen(false)
                         setDeleteConfirmName("")
-                        if (projects && projects.length > 1) {
-                          const next = projects.find((p) => p.id !== projectId)
-                          if (next) setProjectId(next.id)
-                        }
+                        setProjectId(null)
                       },
                     })
                   }
@@ -342,10 +332,7 @@ export function Sidebar({
                   onSuccess: () => {
                     setDeleteDialogOpen(false)
                     setDeleteConfirmName("")
-                    if (projects && projects.length > 1) {
-                      const next = projects.find((p) => p.id !== projectId)
-                      if (next) setProjectId(next.id)
-                    }
+                    setProjectId(null)
                   },
                 })
               }}

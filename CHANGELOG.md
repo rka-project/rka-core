@@ -37,6 +37,10 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- The dashboard requires explicit project selection or creation before scoped
+  reads and writes. Legacy browser selections require one confirmation; missing
+  or deleted selections never silently switch projects. Existing projects and
+  historical migrations remain unchanged.
 - Supported Core runtime dependencies receive targeted security updates and
   fail-closed Python/frontend audit gates. Dependabot covers uv, npm, Actions
   and Docker. Lockfile validation is source evidence, not a production rollout.
