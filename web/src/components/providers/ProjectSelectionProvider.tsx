@@ -23,12 +23,13 @@ export function ProjectSelectionProvider({ children }: { children: ReactNode }) 
 
   const setProjectId = useCallback((nextProjectId: string | null) => {
     applyProjectChoice(nextProjectId, {
+      candidateId,
       publishedId: getApiProjectId(),
       revokeScope: () => setApiProjectId(null),
       persistChoice: saveProjectChoice,
       setCandidate: setCandidateId,
     })
-  }, [])
+  }, [candidateId])
 
   useEffect(() => {
     const next = selectedExists && !projects.isError ? candidateId : null

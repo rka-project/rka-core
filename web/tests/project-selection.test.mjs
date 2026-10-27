@@ -11,9 +11,9 @@ function storage(seed = {}) {
     setItem: (key, value) => data.set(key, value), removeItem: (key) => data.delete(key) }
 }
 
-function choiceActions(publishedId) {
+function choiceActions(publishedId, candidateId = publishedId) {
   const calls = []
-  return { calls, publishedId,
+  return { calls, publishedId, candidateId,
     revokeScope: () => calls.push(["revoke"]),
     persistChoice: (id) => calls.push(["persist", id]),
     setCandidate: (id) => calls.push(["candidate", id]),
@@ -35,6 +35,12 @@ test("switching revokes before publishing state, while clearing always cancels p
   const pending = choiceActions(null)
   applyProjectChoice(null, pending)
   assert.deepEqual(pending.calls, [["revoke"], ["persist", null], ["candidate", null]])
+})
+
+test("a published id does not suppress a different pending candidate", () => {
+  const actions = choiceActions("prj_one", "prj_two")
+  applyProjectChoice("prj_one", actions)
+  assert.deepEqual(actions.calls, [["revoke"], ["persist", "prj_one"], ["candidate", "prj_one"]])
 })
 
 test("a fresh browser has no project and reading does not persist a fallback", () => {

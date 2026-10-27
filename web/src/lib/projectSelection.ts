@@ -16,6 +16,7 @@ export function normalizeProjectId(value: string | null | undefined): string | n
 }
 
 type ProjectChoiceActions = {
+  candidateId: string | null
   publishedId: string | null
   revokeScope: () => void
   persistChoice: (id: string | null) => void
@@ -24,7 +25,7 @@ type ProjectChoiceActions = {
 
 export function applyProjectChoice(value: string | null, actions: ProjectChoiceActions): void {
   const next = normalizeProjectId(value)
-  if (next !== null && next === actions.publishedId) {
+  if (next !== null && next === actions.publishedId && next === actions.candidateId) {
     // Candidate state would not change, so the publication effect would not
     // run again. Keep the active scope (and unsaved page state) intact.
     actions.persistChoice(next)
