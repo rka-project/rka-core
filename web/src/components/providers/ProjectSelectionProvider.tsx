@@ -4,7 +4,7 @@ import { getApiProjectId, setApiProjectId, subscribeApiProjectId } from "@/api/c
 import type { ProjectInfo } from "@/api/types"
 import { ProjectSelectionContext } from "@/contexts/projectSelection"
 import { useProjects } from "@/hooks/useProject"
-import { normalizeProjectId, readConfirmedProject, saveProjectChoice } from "@/lib/projectSelection"
+import { applyProjectChoice, readConfirmedProject, saveProjectChoice } from "@/lib/projectSelection"
 import { ProjectChoiceGate } from "./ProjectChoiceGate"
 
 export function ProjectSelectionProvider({ children }: { children: ReactNode }) {
@@ -22,11 +22,12 @@ export function ProjectSelectionProvider({ children }: { children: ReactNode }) 
   }
 
   const setProjectId = useCallback((nextProjectId: string | null) => {
-    const next = normalizeProjectId(nextProjectId)
-    // Revoke the previous request scope before unmounting its pages.
-    setApiProjectId(null)
-    saveProjectChoice(next)
-    setCandidateId(next)
+    applyProjectChoice(nextProjectId, {
+      publishedId: getApiProjectId(),
+      revokeScope: () => setApiProjectId(null),
+      persistChoice: saveProjectChoice,
+      setCandidate: setCandidateId,
+    })
   }, [])
 
   useEffect(() => {

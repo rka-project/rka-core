@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { loadTypescript } from "./load-typescript.mjs"
 
-const { readConfirmedProject, saveProjectChoice, CONFIRMED_PROJECT_SELECTION_KEY, PROJECT_SELECTION_STORAGE_KEY } =
+const { applyProjectChoice, readConfirmedProject, saveProjectChoice, CONFIRMED_PROJECT_SELECTION_KEY, PROJECT_SELECTION_STORAGE_KEY } =
   await loadTypescript(new URL("../src/lib/projectSelection.ts", import.meta.url))
 
 function storage(seed = {}) {
@@ -10,6 +10,32 @@ function storage(seed = {}) {
   return { data, getItem: (key) => data.get(key) ?? null,
     setItem: (key, value) => data.set(key, value), removeItem: (key) => data.delete(key) }
 }
+
+function choiceActions(publishedId) {
+  const calls = []
+  return { calls, publishedId,
+    revokeScope: () => calls.push(["revoke"]),
+    persistChoice: (id) => calls.push(["persist", id]),
+    setCandidate: (id) => calls.push(["candidate", id]),
+  }
+}
+
+test("reselecting the published project never revokes scope or remounts pages", () => {
+  for (const id of ["prj_one", "proj_default"]) {
+    const actions = choiceActions(id)
+    applyProjectChoice(" " + id + " ", actions)
+    assert.deepEqual(actions.calls, [["persist", id]])
+  }
+})
+
+test("switching revokes before publishing state, while clearing always cancels pending choice", () => {
+  const switched = choiceActions("prj_one")
+  applyProjectChoice("prj_two", switched)
+  assert.deepEqual(switched.calls, [["revoke"], ["persist", "prj_two"], ["candidate", "prj_two"]])
+  const pending = choiceActions(null)
+  applyProjectChoice(null, pending)
+  assert.deepEqual(pending.calls, [["revoke"], ["persist", null], ["candidate", null]])
+})
 
 test("a fresh browser has no project and reading does not persist a fallback", () => {
   const saved = storage()

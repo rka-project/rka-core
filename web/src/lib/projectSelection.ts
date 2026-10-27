@@ -15,6 +15,26 @@ export function normalizeProjectId(value: string | null | undefined): string | n
   return value?.trim() || null
 }
 
+type ProjectChoiceActions = {
+  publishedId: string | null
+  revokeScope: () => void
+  persistChoice: (id: string | null) => void
+  setCandidate: (id: string | null) => void
+}
+
+export function applyProjectChoice(value: string | null, actions: ProjectChoiceActions): void {
+  const next = normalizeProjectId(value)
+  if (next !== null && next === actions.publishedId) {
+    // Candidate state would not change, so the publication effect would not
+    // run again. Keep the active scope (and unsaved page state) intact.
+    actions.persistChoice(next)
+    return
+  }
+  actions.revokeScope()
+  actions.persistChoice(next)
+  actions.setCandidate(next)
+}
+
 // Old activeProjectId values may have been written automatically. They are not
 // evidence of an explicit choice. Existing users confirm once after upgrading.
 export function readConfirmedProject(storage = projectStorage()): string | null {

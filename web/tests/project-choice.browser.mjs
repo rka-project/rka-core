@@ -101,6 +101,13 @@ try {
   assert.ok(scoped(fresh.calls).every((call) => call.scope === "prj_alpha"))
   passed.push("reload validates and restores the confirmed choice")
 
+  await fresh.page.getByRole("combobox").first().click()
+  await fresh.page.getByRole("option", { name: "Alpha research", exact: true }).click()
+  await fresh.page.getByRole("heading", { name: "Research Journal", exact: true }).waitFor()
+  assert.equal(await fresh.page.evaluate(() => JSON.parse(localStorage.getItem("rka.projectSelection.v1")).projectId), "prj_alpha")
+  assert.ok(scoped(fresh.calls).every((call) => call.scope === "prj_alpha"))
+  passed.push("reselecting the current project keeps its page and request scope available")
+
   fresh.calls.length = 0
   await fresh.page.getByRole("combobox").first().click()
   await fresh.page.getByRole("option", { name: "Default Project", exact: true }).click()
