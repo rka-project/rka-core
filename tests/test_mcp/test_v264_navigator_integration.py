@@ -39,15 +39,8 @@ from pydantic import TypeAdapter
 
 from rka.mcp.operation_args import ExecuteArgsUnion, QueryArgsUnion
 
-from rka.mcp.server import (
-    _TIER_ALWAYS_ON,
-    _TIER_DEFERRED,
-    _TOOL_REGISTRY,
-    RKA_INSTRUCTIONS,
-    brain_orientation,
-    executor_orientation,
-    mcp,
-)
+import rka.mcp.server as _live_server
+from rka.mcp.server import (_TIER_ALWAYS_ON, _TIER_DEFERRED, RKA_INSTRUCTIONS, brain_orientation, executor_orientation)
 
 
 # ---------------------------------------------------------------------------
@@ -87,16 +80,16 @@ def _reset_deferred_registrations():
     surface.
     """
     baseline_registered = {
-        name: rec["registered"] for name, rec in _TOOL_REGISTRY.items()
+        name: rec["registered"] for name, rec in _live_server._TOOL_REGISTRY.items()
     }
     yield
     for name, was_registered in baseline_registered.items():
-        rec = _TOOL_REGISTRY.get(name)
+        rec = _live_server._TOOL_REGISTRY.get(name)
         if rec is None:
             continue
         if rec["registered"] and not was_registered:
             try:
-                mcp._tool_manager.remove_tool(name)
+                _live_server.mcp._tool_manager.remove_tool(name)
             except Exception:
                 pass
             rec["registered"] = False
@@ -104,7 +97,7 @@ def _reset_deferred_registrations():
 
 async def _call(_tool: str, **kwargs: Any) -> dict:
     """Test-side dispatch helper — same shape as test_v263_navigator._call."""
-    fn = _TOOL_REGISTRY[_tool]["fn"]
+    fn = _live_server._TOOL_REGISTRY[_tool]["fn"]
     raw = await fn(**kwargs)
     return json.loads(raw)
 
@@ -119,7 +112,7 @@ def test_rka_instructions_mentions_navigator():
     clients about the navigator — without this, a fresh client only
     sees the always-on tools and has no signal that more exist.
     """
-    instructions = (mcp.instructions or "").lower()
+    instructions = (_live_server.mcp.instructions or "").lower()
     assert (
         "navigator" in instructions or "rka_load_tools" in instructions
     ), (
@@ -301,7 +294,7 @@ def test_navigator_tools_always_on_with_summary(name):
     (c) have a non-empty docstring summary so `rka_help(name=...)`
     and `rka_list_tools` aren't empty.
     """
-    rec = _TOOL_REGISTRY[name]
+    rec = _live_server._TOOL_REGISTRY[name]
     assert rec["tier"] == _TIER_ALWAYS_ON, (
         f"{name} must be always-on so clients can discover and load "
         f"the rest of the catalog"
@@ -340,7 +333,7 @@ async def test_load_then_list_projects_round_trip(ctx):
     assert ctx.session.notifications == 1
 
     # FastMCP tool manager now exposes rka_list_projects
-    mgr_tools = {t.name: t for t in mcp._tool_manager.list_tools()}
+    mgr_tools = {t.name: t for t in _live_server.mcp._tool_manager.list_tools()}
     assert "rka_list_projects" in mgr_tools
 
     # Schema shape — rka_list_projects is one of the few unscoped tools
@@ -469,8 +462,8 @@ async def test_help_on_unloaded_deferred_tool_reports_deferred_and_unregistered(
     """
     # Sanity: confirm the tool we're about to inspect is in fact
     # deferred and unregistered at the start of THIS test.
-    assert _TOOL_REGISTRY["rka_create_mission"]["tier"] == _TIER_DEFERRED
-    assert _TOOL_REGISTRY["rka_create_mission"]["registered"] is False
+    assert _live_server._TOOL_REGISTRY["rka_create_mission"]["tier"] == _TIER_DEFERRED
+    assert _live_server._TOOL_REGISTRY["rka_create_mission"]["registered"] is False
 
     result = await _call("rka_help", name="rka_create_mission")
     assert result["name"] == "rka_create_mission"

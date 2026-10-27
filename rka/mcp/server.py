@@ -22,6 +22,7 @@ from rka.mcp.embedding_status import embedding_summary, embedding_warning
 from pydantic import Field
 import httpx
 from mcp.types import ToolAnnotations
+from mcp.server.fastmcp.exceptions import ToolError
 
 from rka import __version__
 from rka.models.mission import MissionTask
@@ -5514,6 +5515,64 @@ async def rka_extract_claims(
     return "\n".join(lines)
 
 
+async def _assign_cluster_claims(client, cluster_id: str, claim_ids: list[str]) -> list[dict]:
+    """Retain per-request outcomes; a lost response is not proof of no write."""
+    outcomes = []
+    for index, claim_id in enumerate(claim_ids):
+        try:
+            response = await client.post("/api/claims/edges", json={
+                "source_claim_id": claim_id,
+                "cluster_id": cluster_id,
+                "relation": "member_of",
+                "confidence": 0.5,
+            })
+        except httpx.RequestError as exc:
+            outcomes.append({
+                "claim_id": claim_id, "stage": "claim_assignment",
+                "outcome": "unknown", "status_code": None,
+                "error": type(exc).__name__,
+            })
+            outcomes.extend({
+                "claim_id": remaining, "stage": "claim_assignment",
+                "outcome": "not_attempted", "status_code": None,
+            } for remaining in claim_ids[index + 1:])
+            break
+        outcomes.append({
+            "claim_id": claim_id, "stage": "claim_assignment",
+            "outcome": "assigned" if response.is_success else (
+                "unknown" if response.is_server_error else "rejected"
+            ),
+            "status_code": response.status_code,
+        })
+    return outcomes
+
+
+def _raise_cluster_write_failure(
+    cluster_id: str, outcomes: list[dict], *, cluster_created: bool = False,
+    update_error: dict | None = None,
+) -> None:
+    errors = [result for result in outcomes if result["outcome"] != "assigned"]
+    if update_error is not None:
+        errors.append(update_error)
+    if errors:
+        # Raising makes the actual MCP CallToolResult isError=true. Preserve
+        # partial success so callers do not retry an already committed create.
+        raise ToolError(json.dumps({
+            "error": "cluster_write_incomplete",
+            "cluster_id": cluster_id,
+            "cluster_created": cluster_created,
+            "assigned_claim_ids": [
+                result["claim_id"] for result in outcomes if result["outcome"] == "assigned"
+            ],
+            "outcomes": outcomes,
+            "errors": errors,
+            "retry_guidance": (
+                "Reconcile this cluster and each claim outcome before retrying. "
+                "Do not recreate the cluster; an unknown outcome may have committed."
+            ),
+        }))
+
+
 @tool(category="claims")
 async def rka_create_cluster(
     label: str,
@@ -5551,22 +5610,31 @@ async def rka_create_cluster(
 
         assigned = 0
         if claim_ids:
-            for cid in claim_ids:
-                edge_payload = {
-                    "source_claim_id": cid,
-                    "cluster_id": cluster_id,
-                    "relation": "member_of",
-                    "confidence": 0.5,
-                }
-                er = await c.post("/api/claims/edges", json=edge_payload)
-                if er.is_success:
-                    assigned += 1
+            outcomes = await _assign_cluster_claims(c, cluster_id, claim_ids)
+            _raise_cluster_write_failure(cluster_id, outcomes, cluster_created=True)
+            assigned = len(outcomes)
 
-            # Update cluster claim count
-            r2 = await c.put(f"/api/clusters/{cluster_id}", json={
-                "needs_reprocessing": False,
-                "synthesized_by": "brain",
-            })
+            # The edge service owns claim_count. Mark synthesis only after all
+            # requested memberships have acknowledged success.
+            update_error = None
+            try:
+                response = await c.put(f"/api/clusters/{cluster_id}", json={
+                    "needs_reprocessing": False,
+                    "synthesized_by": "brain",
+                })
+                if not response.is_success:
+                    update_error = {
+                        "stage": "cluster_update", "status_code": response.status_code,
+                        "outcome": "unknown" if response.is_server_error else "rejected",
+                    }
+            except httpx.RequestError as exc:
+                update_error = {
+                    "stage": "cluster_update", "status_code": None,
+                    "outcome": "unknown", "error": type(exc).__name__,
+                }
+            _raise_cluster_write_failure(
+                cluster_id, outcomes, cluster_created=True, update_error=update_error,
+            )
 
     parts = [f"Created cluster {cluster_id} ({label}), confidence={confidence}"]
     if assigned:
@@ -5591,22 +5659,11 @@ async def rka_assign_claims_to_cluster(
         cluster_id: Target evidence cluster ID
         claim_ids: List of claim IDs to assign
     """
-    results = []
     async with _client(project_id) as c:
-        for cid in claim_ids:
-            edge_payload = {
-                "source_claim_id": cid,
-                "cluster_id": cluster_id,
-                "relation": "member_of",
-                "confidence": 0.5,
-            }
-            r = await c.post("/api/claims/edges", json=edge_payload)
-            if r.is_success:
-                results.append(f"  {cid}: assigned")
-            else:
-                results.append(f"  {cid}: failed ({r.status_code})")
-
-    return f"Assigned {len([r for r in results if 'assigned' in r])}/{len(claim_ids)} claims to cluster {cluster_id}:\n" + "\n".join(results)
+        outcomes = await _assign_cluster_claims(c, cluster_id, claim_ids)
+    _raise_cluster_write_failure(cluster_id, outcomes)
+    results = [f"  {item['claim_id']}: assigned" for item in outcomes]
+    return f"Assigned {len(outcomes)}/{len(claim_ids)} claims to cluster {cluster_id}:\n" + "\n".join(results)
 
 
 @tool(category="decision")

@@ -124,4 +124,7 @@ async def create_claim_edge(
     data: ClaimEdgeCreate,
     svc: ClaimService = Depends(get_scoped_claim_service),
 ):
-    return await svc.create_edge(data)
+    try:
+        return await svc.create_edge(data)
+    except (ValueError, sqlite3.IntegrityError) as exc:
+        _raise_claim_scope_error(exc)

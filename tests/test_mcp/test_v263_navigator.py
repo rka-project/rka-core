@@ -23,12 +23,10 @@ from typing import Any
 
 import pytest
 
-from rka.mcp.server import (
-    _TIER_ALWAYS_ON,
-    _TIER_DEFERRED,
-    _TOOL_REGISTRY,
-    mcp,
-)
+import rka.mcp.server as server
+
+# Other MCP suites reload this module to exercise startup modes. Resolve the
+# live registry and manager together; collection-time aliases become stale.
 
 
 # ---------------------------------------------------------------------------
@@ -71,18 +69,18 @@ def _reset_deferred_registrations():
     exercised.
     """
     baseline_registered = {
-        name: rec["registered"] for name, rec in _TOOL_REGISTRY.items()
+        name: rec["registered"] for name, rec in server._TOOL_REGISTRY.items()
     }
     yield
     for name, was_registered in baseline_registered.items():
-        rec = _TOOL_REGISTRY.get(name)
+        rec = server._TOOL_REGISTRY.get(name)
         if rec is None:
             continue
         if rec["registered"] and not was_registered:
             # Un-register from FastMCP's tool manager too, so the next
             # test sees the original always-on count.
             try:
-                mcp._tool_manager.remove_tool(name)
+                server.mcp._tool_manager.remove_tool(name)
             except Exception:
                 pass
             rec["registered"] = False
@@ -95,7 +93,7 @@ def _reset_deferred_registrations():
 
 def test_registry_contains_all_rka_tools():
     """Every rka_* function in server.py is registered, regardless of tier."""
-    names = set(_TOOL_REGISTRY)
+    names = set(server._TOOL_REGISTRY)
     # 91 original rka_* tools + 3 navigator tools = 94 minimum.
     assert len(names) >= 94
     # Every name must start with `rka_` (the canonical prefix).
@@ -149,7 +147,7 @@ def test_always_on_tier_membership():
         "rka_read_skill",
     }
     actual_always_on = {
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
+        n for n, r in server._TOOL_REGISTRY.items() if r["tier"] == server._TIER_ALWAYS_ON
     }
     assert actual_always_on == expected_always_on, (
         f"always-on membership drift: "
@@ -168,10 +166,10 @@ def test_deferred_tier_size_within_cap():
     Deferred is 79+ legacy tools that haven't been promoted.
     """
     always_on = [
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
+        n for n, r in server._TOOL_REGISTRY.items() if r["tier"] == server._TIER_ALWAYS_ON
     ]
     deferred = [
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_DEFERRED
+        n for n, r in server._TOOL_REGISTRY.items() if r["tier"] == server._TIER_DEFERRED
     ]
     assert len(always_on) == 24
     assert len(deferred) >= 79  # 79 original deferred tools; never < this
@@ -181,9 +179,9 @@ def test_deferred_tier_size_within_cap():
 def test_only_always_on_is_visible_at_startup():
     """The fundamental client-cap contract: a client doing tools/list
     at session start sees ONLY the always-on layer — nothing else."""
-    visible = sorted(t.name for t in mcp._tool_manager.list_tools())
+    visible = sorted(t.name for t in server.mcp._tool_manager.list_tools())
     always_on = sorted(
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
+        n for n, r in server._TOOL_REGISTRY.items() if r["tier"] == server._TIER_ALWAYS_ON
     )
     # Filter out any deferred tools that were loaded by a previous test
     # whose teardown didn't run yet (paranoia — autouse fixture should
@@ -194,7 +192,7 @@ def test_only_always_on_is_visible_at_startup():
 
 def test_every_tool_has_category_metadata():
     """rka_list_tools renders by category; every tool needs one."""
-    for name, rec in _TOOL_REGISTRY.items():
+    for name, rec in server._TOOL_REGISTRY.items():
         assert rec["category"], f"{name} has no category"
         assert isinstance(rec["category"], str)
 
@@ -208,7 +206,7 @@ def test_tools_list_changed_capability_advertised():
     """v2.6.3 advertises tools.listChanged: true in the initialize
     handshake — without this both Claude Desktop and Claude Code IGNORE
     the runtime notification."""
-    init_opts = mcp._mcp_server.create_initialization_options()
+    init_opts = server.mcp._mcp_server.create_initialization_options()
     assert init_opts.capabilities is not None
     assert init_opts.capabilities.tools is not None
     assert init_opts.capabilities.tools.listChanged is True
@@ -223,7 +221,7 @@ def test_capability_override_preserves_other_notifications():
     caller_opts = NotificationOptions(
         prompts_changed=True, resources_changed=True, tools_changed=False
     )
-    init_opts = mcp._mcp_server.create_initialization_options(
+    init_opts = server.mcp._mcp_server.create_initialization_options(
         notification_options=caller_opts
     )
     # tools_changed forced to True regardless
@@ -245,7 +243,7 @@ async def _call(_tool: str, **kwargs: Any) -> dict:
     first parameter is `name` (e.g. `rka_help`) doesn't collide via
     kwargs.
     """
-    fn = _TOOL_REGISTRY[_tool]["fn"]
+    fn = server._TOOL_REGISTRY[_tool]["fn"]
     raw = await fn(**kwargs)
     return json.loads(raw)
 
@@ -253,7 +251,7 @@ async def _call(_tool: str, **kwargs: Any) -> dict:
 @pytest.mark.asyncio
 async def test_list_tools_no_filter_returns_full_catalog():
     result = await _call("rka_list_tools")
-    assert result["total_tools"] == len(_TOOL_REGISTRY)
+    assert result["total_tools"] == len(server._TOOL_REGISTRY)
     assert result["filtered_count"] == result["total_tools"]
     # Every category bucket has at least one tool.
     for cat, tools in result["categories"].items():
@@ -355,12 +353,12 @@ async def test_load_tools_registers_deferred(ctx):
     # Notification fired exactly once for the whole load batch
     assert ctx.session.notifications == 1
     # FastMCP tool manager now has the tool
-    mgr_names = [t.name for t in mcp._tool_manager.list_tools()]
+    mgr_names = [t.name for t in server.mcp._tool_manager.list_tools()]
     assert "rka_add_literature" in mgr_names
     assert "rka_update_literature" in mgr_names
     # Registry flipped to registered=True
-    assert _TOOL_REGISTRY["rka_add_literature"]["registered"] is True
-    assert _TOOL_REGISTRY["rka_update_literature"]["registered"] is True
+    assert server._TOOL_REGISTRY["rka_add_literature"]["registered"] is True
+    assert server._TOOL_REGISTRY["rka_update_literature"]["registered"] is True
 
 
 @pytest.mark.asyncio
@@ -450,10 +448,10 @@ async def test_load_tools_notification_failure_does_not_reverse_registration(ctx
     )
     # Registration still happened
     assert result["loaded"] == ["rka_add_literature"]
-    assert _TOOL_REGISTRY["rka_add_literature"]["registered"] is True
+    assert server._TOOL_REGISTRY["rka_add_literature"]["registered"] is True
     # FastMCP tool manager has it
     assert any(
-        t.name == "rka_add_literature" for t in mcp._tool_manager.list_tools()
+        t.name == "rka_add_literature" for t in server.mcp._tool_manager.list_tools()
     )
 
 
@@ -468,7 +466,7 @@ async def test_loaded_tool_schema_matches_signature(ctx):
     structure FastMCP renders for any always-on tool — same shape, same
     annotations, same `project_id` requirement."""
     await _call("rka_load_tools", names=["rka_add_literature"], ctx=ctx)
-    mgr_tools = {t.name: t for t in mcp._tool_manager.list_tools()}
+    mgr_tools = {t.name: t for t in server.mcp._tool_manager.list_tools()}
     add_lit = mgr_tools["rka_add_literature"]
     assert add_lit.parameters  # has rendered inputSchema
     # project_id is a kwarg-only required field on every project-scoped
@@ -491,7 +489,7 @@ async def test_loaded_tool_callable_via_fastmcp(ctx):
     # by inspecting list_tools (already done above) + asserting the
     # wrapper is the same object as in the registry.
     mgr_tool = next(
-        t for t in mcp._tool_manager.list_tools() if t.name == "rka_list_clusters"
+        t for t in server.mcp._tool_manager.list_tools() if t.name == "rka_list_clusters"
     )
     assert mgr_tool is not None
 
@@ -504,7 +502,7 @@ async def test_loaded_tool_callable_via_fastmcp(ctx):
 def test_navigator_tools_registered_at_startup():
     """The three navigator tools must be in the always-on layer — without
     them, clients can never discover or load the deferred surface."""
-    mgr_names = {t.name for t in mcp._tool_manager.list_tools()}
+    mgr_names = {t.name for t in server.mcp._tool_manager.list_tools()}
     assert "rka_load_tools" in mgr_names
     assert "rka_list_tools" in mgr_names
     assert "rka_help" in mgr_names
