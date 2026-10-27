@@ -37,6 +37,10 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- Supported Core runtime dependencies receive targeted security updates and
+  fail-closed Python/frontend audit gates. Dependabot covers uv, npm, Actions
+  and Docker. Lockfile validation is source evidence, not a production rollout.
+
 - Local MCP clients receive the two package-only read tools `rka_list_skills`
   and `rka_read_skill` on the initial tool list, without dynamic discovery.
   The default surface is seven tools; write dispatch, deferred write tools,
