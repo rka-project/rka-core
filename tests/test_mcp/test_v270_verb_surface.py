@@ -23,11 +23,8 @@ import re
 
 import pytest
 
-from rka.mcp.server import (
-    _TIER_ALWAYS_ON,
-    _TOOL_REGISTRY,
-    mcp,
-)
+import rka.mcp.server as _live_server
+from rka.mcp.server import (_TIER_ALWAYS_ON)
 
 
 # The 8 v2.7.0 always-on verbs — single source of truth for this file.
@@ -75,13 +72,13 @@ _ROLE_TAG_RE = re.compile(
 
 
 def _verb_record(name: str) -> dict:
-    rec = _TOOL_REGISTRY.get(name)
+    rec = _live_server._TOOL_REGISTRY.get(name)
     assert rec is not None, f"verb {name!r} missing from _TOOL_REGISTRY"
     return rec
 
 
 def _mcp_tool(name: str):
-    tools = {t.name: t for t in mcp._tool_manager.list_tools()}
+    tools = {t.name: t for t in _live_server.mcp._tool_manager.list_tools()}
     return tools.get(name)
 
 
@@ -130,7 +127,7 @@ def test_exactly_eight_verbs_under_verb_category() -> None:
     """v2.7.0a3 — rka_query promoted to 'dispatch' category. The other
     7 v2.7.0a2 verbs remain under category='verb'."""
     verbs = sorted(
-        n for n, r in _TOOL_REGISTRY.items()
+        n for n, r in _live_server._TOOL_REGISTRY.items()
         if r.get("category") == "verb"
     )
     expected = sorted(set(V270_VERBS) - {"rka_query"})
@@ -154,7 +151,7 @@ def test_legacy_always_on_count_includes_startup_skill_reads() -> None:
     test_v270a3_dispatch_surface.py.
     """
     always_on = sorted(
-        n for n, r in _TOOL_REGISTRY.items()
+        n for n, r in _live_server._TOOL_REGISTRY.items()
         if r["tier"] == _TIER_ALWAYS_ON
     )
     assert len(always_on) == 24, (
@@ -174,7 +171,7 @@ def test_always_on_membership_exact() -> None:
         "rka_list_skills", "rka_read_skill"
     }
     actual = {
-        n for n, r in _TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
+        n for n, r in _live_server._TOOL_REGISTRY.items() if r["tier"] == _TIER_ALWAYS_ON
     }
     assert actual == expected, (
         f"always-on membership drift — "
@@ -190,8 +187,8 @@ def test_legacy_91_tools_still_callable() -> None:
     # We don't pin the exact 91 list (the deferred set drifts when
     # internal tools move); the contract is that the *total* registry
     # is well over 91 (12 + 79 deferred + 8 verbs + 3 navigator = 102+).
-    assert len(_TOOL_REGISTRY) >= 91, (
-        f"registry has {len(_TOOL_REGISTRY)} entries; expected ≥ 91. "
+    assert len(_live_server._TOOL_REGISTRY) >= 91, (
+        f"registry has {len(_live_server._TOOL_REGISTRY)} entries; expected ≥ 91. "
         f"Some legacy @tool was silently dropped — bookkeeper invariant "
         f"violated."
     )
@@ -202,7 +199,7 @@ def test_legacy_91_tools_still_callable() -> None:
         "rka_submit_checkpoint", "rka_submit_report",
         "rka_link_literature_to_zotero", "rka_ingest_document",
     ):
-        assert n in _TOOL_REGISTRY, (
+        assert n in _live_server._TOOL_REGISTRY, (
             f"legacy tool {n!r} missing — PR-1 must NOT remove legacy tools"
         )
 

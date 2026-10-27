@@ -37,6 +37,11 @@ All notable changes to RKA are documented here. Format loosely follows
 
 ### Fixed
 
+- Claim-edge scope errors now return explicit validation failures. MCP cluster
+  workflows report partial writes as tool errors with acknowledged IDs and
+  per-request outcomes; corrupt mission reports remain readable with a visible
+  diagnostic instead of silently appearing absent. No stored report is rewritten.
+
 - Local MCP clients receive the two package-only read tools `rka_list_skills`
   and `rka_read_skill` on the initial tool list, without dynamic discovery.
   The default surface is seven tools; write dispatch, deferred write tools,
