@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -190,15 +190,15 @@ wheels = [
 
 [[package]]
 name = "arxiv"
-version = "3.0.0"
+version = "4.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "feedparser" },
+    { name = "lxml" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/78/1e93a001ed51b5114e1978247078fa3130cbb2794a520603949cbe9a7028/arxiv-3.0.0.tar.gz", hash = "sha256:c8cb0d31208afbc1ceb17bd3f9816c8d4c5ca1e0abf199d211e216715440498d", size = 67344, upload-time = "2026-04-12T22:48:59.623Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/2e/c6cd87cf0ffa1ae00cb23b1a0b56bd1e93ae91296f093d2c0c30b479ca11/arxiv-4.0.1.tar.gz", hash = "sha256:304e91a9f869fa4cc362a0a6f38ecb956eec11b83619465172ab24b9453e3d51", size = 198962, upload-time = "2026-07-31T23:42:17.815Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/0d/bb2ef604e5548ba73ba6326576908d8285ebf3468b02b86af83381c7c973/arxiv-3.0.0-py3-none-any.whl", hash = "sha256:8b4d4e2e336bfeb71ea653623d7dadb260f682f0475cee2aecad0560a23b34db", size = 11928, upload-time = "2026-04-12T22:48:58.44Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/4a/b0b203c02e283e2312ed12c5ddb2d9f8ddec557f8f49f3810e9cc10591d4/arxiv-4.0.1-py3-none-any.whl", hash = "sha256:72a79d22a83fec14c3a23966791692e2400399c218ad4e5416ce84af817a9cc9", size = 13015, upload-time = "2026-07-31T23:42:16.591Z" },
 ]
 
 [[package]]
@@ -578,18 +578,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/c8/2ce1c78f983a2c4987ea865d9516dbdfb141a120fd3abb977ae6f02ba7ca/fastuuid-0.14.0-cp314-cp314-musllinux_1_1_x86_64.whl", hash = "sha256:ec27778c6ca3393ef662e2762dba8af13f4ec1aaa32d08d77f71f2a70ae9feb8", size = 450837, upload-time = "2025-10-19T22:34:37.178Z" },
     { url = "https://files.pythonhosted.org/packages/df/60/dad662ec9a33b4a5fe44f60699258da64172c39bd041da2994422cdc40fe/fastuuid-0.14.0-cp314-cp314-win32.whl", hash = "sha256:e23fc6a83f112de4be0cc1990e5b127c27663ae43f866353166f87df58e73d06", size = 154532, upload-time = "2025-10-19T22:35:18.217Z" },
     { url = "https://files.pythonhosted.org/packages/1f/f6/da4db31001e854025ffd26bc9ba0740a9cbba2c3259695f7c5834908b336/fastuuid-0.14.0-cp314-cp314-win_amd64.whl", hash = "sha256:df61342889d0f5e7a32f7284e55ef95103f2110fee433c2ae7c2c0956d76ac8a", size = 156457, upload-time = "2025-10-19T22:33:44.579Z" },
-]
-
-[[package]]
-name = "feedparser"
-version = "6.0.12"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "sgmllib3k" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/79/db7edb5e77d6dfbc54d7d9df72828be4318275b2e580549ff45a962f6461/feedparser-6.0.12.tar.gz", hash = "sha256:64f76ce90ae3e8ef5d1ede0f8d3b50ce26bcce71dd8ae5e82b1cd2d4a5f94228", size = 286579, upload-time = "2025-09-10T13:33:59.486Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/eb/c96d64137e29ae17d83ad2552470bafe3a7a915e85434d9942077d7fd011/feedparser-6.0.12-py3-none-any.whl", hash = "sha256:6bbff10f5a52662c00a2e3f86a38928c37c48f77b3c511aedcd51de933549324", size = 81480, upload-time = "2025-09-10T13:33:58.022Z" },
 ]
 
 [[package]]
@@ -2646,12 +2634,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/ff/1a/60fbb6096ed06d9d4
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/84/9b273b7ae0946e1b311ec651605c9c229d0553863dcc6c5a315150c5f7ef/semanticscholar-0.12.0-py3-none-any.whl", hash = "sha256:bffa484dd08e5c8041eaec357a46ec44838c79a0cfd4ddea20d09f84d350a830", size = 28289, upload-time = "2026-03-29T20:07:23.019Z" },
 ]
-
-[[package]]
-name = "sgmllib3k"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9e/bd/3704a8c3e0942d711c1299ebf7b9091930adae6675d7c8f476a7ce48653c/sgmllib3k-1.0.0.tar.gz", hash = "sha256:7868fb1c8bfa764c1ac563d3cf369c381d1325d36124933a726f29fcdaa812e9", size = 5750, upload-time = "2010-08-24T14:33:52.445Z" }
 
 [[package]]
 name = "shellingham"
