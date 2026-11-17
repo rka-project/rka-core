@@ -12,7 +12,7 @@ COPY web/ .
 RUN npm run build
 
 # --- Stage 2: Build sqlite-vec from source ---
-FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2 AS vec-builder
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS vec-builder
 
 ARG SQLITE_VEC_VERSION=0.1.6
 ARG SQLITE_VEC_SHA256=0664b8c3c3fa5c53d0c9182de20c5206cce74038bdfbcd77e37366e988d11dba
@@ -36,7 +36,7 @@ RUN curl -fsSL -o sqlite-vec.zip \
 FROM ghcr.io/astral-sh/uv:0.9.17@sha256:5cb6b54d2bc3fe2eb9a8483db958a0b9eebf9edff68adedb369df8e7b98711a2 AS uv-tool
 
 # --- Stage 4: Locked Python dependency builder ---
-FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2 AS python-deps
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS python-deps
 
 # Build-only compiler for packages without a wheel on a supported architecture.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -60,7 +60,7 @@ RUN uv sync --locked --no-dev --no-editable \
     && uv cache clean
 
 # --- Stage 5: Python runtime ---
-FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2 AS runtime
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS runtime
 
 WORKDIR /app
 
