@@ -33,7 +33,7 @@ RUN curl -fsSL -o sqlite-vec.zip \
     && gcc -O3 -fPIC -shared sqlite-vec.c -o vec0.so -lm
 
 # --- Stage 3: Locked dependency installer ---
-FROM ghcr.io/astral-sh/uv:0.9.17@sha256:5cb6b54d2bc3fe2eb9a8483db958a0b9eebf9edff68adedb369df8e7b98711a2 AS uv-tool
+FROM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv-tool
 
 # --- Stage 4: Locked Python dependency builder ---
 FROM python:3.13-slim@sha256:881d80734ee05dca6f7f42dcb080975652a53c7eda9ba1f03bb8da31aa6a6ec2 AS python-deps
